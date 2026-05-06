@@ -570,6 +570,17 @@ function emitTimeWarnings(timeLeft) {
   }
 }
 
+function powerLabel(type) {
+  const labels = {
+    superShot: 'super chute',
+    curve: 'curva',
+    magnet: 'magneto',
+    slow: 'câmera lenta',
+    precision: 'precisão',
+  };
+  return labels[type] || type;
+}
+
 function checkWinner() {
   const maxGoals = Number(gameConfig.maxGoals);
   if (match.score[0] >= maxGoals) return 0;
