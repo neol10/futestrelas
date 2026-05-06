@@ -201,6 +201,12 @@ function cycleKeyboardSelection(playerId) {
   const current = world.keyboardSelectedIndices[playerId] ?? 0;
   const next = (current + 1) % buttons.length;
   world.keyboardSelectedIndices[playerId] = next;
+
+  // Usa o poder ao trocar de botão (ao pressionar F ou P)
+  const player = players[playerId];
+  if (player?.activePower) {
+    consumeKeyboardPower(player);
+  }
 }
 
 function clampMagnitude(vx, vy, maxSpeed) {
