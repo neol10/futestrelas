@@ -1,12 +1,17 @@
 import { clamp, rand, randInt } from './utils.js';
 
 const POWER_TYPES = [
+  // Poderes do jogador (melhoram seu desempenho)
   'superShot', 'curve', 'magnet', 'slow', 'precision',
   'shield', 'boost', 'freeze', 'teleport', 'split',
-  'block', 'spinner', 'smoke', 'lightning', 'void'
+  'block', 'spinner', 'smoke', 'lightning', 'void',
+  // Poderes adversários (prejudicam o adversário)
+  'webSlowdown', 'reverse', 'blur', 'stun', 'drain',
+  'swamp', 'zap', 'confuse'
 ];
 
 const POWER_COLORS = {
+  // Poderes de benefício próprio
   superShot: '#ff3b30',
   curve: '#b86bff',
   magnet: '#2ee0ff',
@@ -22,6 +27,15 @@ const POWER_COLORS = {
   smoke: '#999999',
   lightning: '#ffcc00',
   void: '#6600ff',
+  // Poderes adversários
+  webSlowdown: '#cc00cc',  // roxo escuro - rede de aranha
+  reverse: '#ff6644',       // laranja queimado - inverte controles
+  blur: '#aaaaaa',          // cinza - visão turva
+  stun: '#ffff00',          // amarelo brilhante - atordoado
+  drain: '#ff0000',         // vermelho - drenar energia
+  swamp: '#884422',         // marrom - pântano (movimento lento)
+  zap: '#00ffff',           // ciano - choque elétrico
+  confuse: '#ff00ff'        // magenta - confundido
 };
 
 export class PowerUpSystem {

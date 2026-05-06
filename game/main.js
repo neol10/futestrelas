@@ -204,15 +204,11 @@ function useKeyboardPower(playerId) {
   if (state !== 'playing') return;
   const player = players[playerId];
   if (!player?.activePower) {
-    ui.pop({
-      title: 'Sem poder',
-      message: `${player.name} não tem poder ativo`,
-      kind: 'warning',
-      ttl: 1200,
-    });
+    // Sem poder: troca de jogador em vez disso
+    cycleKeyboardSelection(playerId);
     return;
   }
-  // Usa o poder imediatamente
+  // Tem poder: usa imediatamente
   consumeKeyboardPower(player);
   audio.power(player.activePower.type);
 }
@@ -421,13 +417,13 @@ window.addEventListener('keydown', (e) => {
 
   if (e.repeat) return;
   
-  // Comandos de trocar botão (F/P) e chute (E/O)
+  // Comandos de usar poder (F/P) e chute (E/O)
   if (code === 'KeyF' && state === 'playing') {
-    cycleKeyboardSelection(0);
+    useKeyboardPower(0);
     return;
   }
   if (code === 'KeyP' && state === 'playing') {
-    cycleKeyboardSelection(1);
+    useKeyboardPower(1);
     return;
   }
   if (code === 'KeyE' && state === 'playing') {
@@ -541,6 +537,12 @@ function update(dt) {
         world.activeShotPlayerId = null;
         turnLock = false;
       }
+    }
+
+    // Em modo teclado, reseta turnLock quando tudo parou
+    if (gameConfig.controlMode === 'keyboard' && turnLock && allStopped() && state === 'playing') {
+      turnLock = false;
+      world.activeShotPlayerId = null;
     }
 
     function toggleFullscreen() {
@@ -663,6 +665,15 @@ function powerLabel(type) {
     smoke: 'fumaça',
     lightning: 'raio',
     void: 'vazio',
+    // Poderes adversários
+    webSlowdown: 'teia de aranha',
+    reverse: 'inverter',
+    blur: 'visão turva',
+    stun: 'atordoamento',
+    drain: 'drenar',
+    swamp: 'pântano',
+    zap: 'choque',
+    confuse: 'confusão',
   };
   return labels[type] || type;
 }
