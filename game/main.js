@@ -190,7 +190,7 @@ function getKeyboardSelectionText() {
   const p2Buttons = getButtonsForPlayer(1);
   const p1Index = world?.keyboardSelectedIndices?.[0] ?? 0;
   const p2Index = world?.keyboardSelectedIndices?.[1] ?? 0;
-  return `WASD: botão ${Math.min(p1Buttons.length, p1Index + 1)} • Setas: botão ${Math.min(p2Buttons.length, p2Index + 1)} • troca: F / P`;
+  return `WASD + E (toque J1) • Setas + O (toque J2) • poder: F / P`;
 }
 
 function cycleKeyboardSelection(playerId) {
@@ -201,12 +201,53 @@ function cycleKeyboardSelection(playerId) {
   const current = world.keyboardSelectedIndices[playerId] ?? 0;
   const next = (current + 1) % buttons.length;
   world.keyboardSelectedIndices[playerId] = next;
+}
 
-  // Usa o poder ao trocar de botão (ao pressionar F ou P)
+function useKeyboardPower(playerId) {
+  if (state !== 'playing') return;
   const player = players[playerId];
-  if (player?.activePower) {
-    consumeKeyboardPower(player);
+  if (!player?.activePower) return;
+  consumeKeyboardPower(player);
+}
+
+function kickBallKeyboard(playerId) {
+  if (state !== 'playing') return;
+  if (!allStopped()) return;
+  
+  const button = getKeyboardSelection(playerId);
+  if (!button) return;
+  
+  // Calcula direção aproximada em relação à bola
+  const dx = world.ball.x - button.x;
+  const dy = world.ball.y - button.y;
+  const dist = Math.hypot(dx, dy);
+  
+  if (dist < 1) return; // evita divisão por zero
+  
+  let dirx = dx / dist;
+  let diry = dy / dist;
+  
+  // Aplica força do chute com power-up
+  const basePower = 800; // força base para toque
+  const power = button.computeShotPower(basePower, players[playerId]?.activePower);
+  const aim = button.applyAimAssist({ x: dirx, y: diry }, players[playerId]?.activePower);
+  dirx = aim.x;
+  diry = aim.y;
+  button.ownerPower = players[playerId]?.activePower ?? null;
+  
+  button.vx += dirx * power;
+  button.vy += diry * power;
+  button.lastShotAt = performance.now();
+  turnLock = true;
+  world.activeShotPlayerId = playerId;
+  world.extraTurnGranted = false;
+  world.extraTurnGrantedPlayerId = null;
+  
+  if (players[playerId]?.activePower) {
+    consumeKeyboardPower(players[playerId]);
   }
+  
+  audio.kick(power / 1300);
 }
 
 function clampMagnitude(vx, vy, maxSpeed) {
@@ -363,15 +404,32 @@ window.addEventListener('keydown', (e) => {
   }
 
   const code = e.code;
-  const moveCodes = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'KeyF', 'Digit2']);
+  const moveCodes = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'KeyF', 'KeyP', 'KeyE', 'KeyO']);
   if (moveCodes.has(code)) e.preventDefault();
 
   if (e.repeat) return;
+  
+  // Comandos de poder e chute (sem repetição)
+  if (code === 'KeyF') {
+    useKeyboardPower(0);
+    return;
+  }
+  if (code === 'KeyP') {
+    useKeyboardPower(1);
+    return;
+  }
+  if (code === 'KeyE') {
+    kickBallKeyboard(0);
+    return;
+  }
+  if (code === 'KeyO') {
+    kickBallKeyboard(1);
+    return;
+  }
+  
   keyboardInput.keysDown.add(code);
 
   if (state !== 'playing') return;
-  if (code === 'KeyF') cycleKeyboardSelection(0);
-  if (code === 'KeyP') cycleKeyboardSelection(1);
 });
 
 window.addEventListener('keyup', (e) => {
