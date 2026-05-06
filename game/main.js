@@ -68,6 +68,7 @@ let drag = {
 };
 
 let turnLock = false;
+let lastKeyboardShotTime = [0, 0]; // Rastreia último chute de cada jogador em modo teclado
 
 let match = {
   timeLeft: 60,
@@ -202,13 +203,27 @@ function cycleKeyboardSelection(playerId) {
 function useKeyboardPower(playerId) {
   if (state !== 'playing') return;
   const player = players[playerId];
-  if (!player?.activePower) return;
-  // NÃO consome ainda - será consumido ao chutar com E/O
-  // Apenas marca que está pronto para usar
+  if (!player?.activePower) {
+    ui.pop({
+      title: 'Sem poder',
+      message: `${player.name} não tem poder ativo`,
+      kind: 'warning',
+      ttl: 1200,
+    });
+    return;
+  }
+  // Usa o poder imediatamente
+  consumeKeyboardPower(player);
+  audio.power(player.activePower.type);
 }
 
 function kickBallKeyboard(playerId) {
   if (state !== 'playing') return;
+  if (turnLock) return; // Evita chutes simultâneos
+  
+  // Cooldown de 600ms entre chutes (para evitar spam)
+  const now = performance.now();
+  if (now - lastKeyboardShotTime[playerId] < 600) return;
   
   const button = getKeyboardSelection(playerId);
   if (!button) return;
@@ -244,6 +259,7 @@ function kickBallKeyboard(playerId) {
   }
   
   audio.kick(power / 1300);
+  lastKeyboardShotTime[playerId] = now;
 }
 
 function clampMagnitude(vx, vy, maxSpeed) {
