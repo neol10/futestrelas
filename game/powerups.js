@@ -1,6 +1,10 @@
 import { clamp, rand, randInt } from './utils.js';
 
-const POWER_TYPES = ['superShot', 'curve', 'magnet', 'slow', 'precision'];
+const POWER_TYPES = [
+  'superShot', 'curve', 'magnet', 'slow', 'precision',
+  'shield', 'boost', 'freeze', 'teleport', 'split',
+  'block', 'spinner', 'smoke', 'lightning', 'void'
+];
 
 const POWER_COLORS = {
   superShot: '#ff3b30',
@@ -8,6 +12,16 @@ const POWER_COLORS = {
   magnet: '#2ee0ff',
   slow: '#ffd200',
   precision: '#37d67a',
+  shield: '#ff9500',
+  boost: '#00ff00',
+  freeze: '#00ccff',
+  teleport: '#ff00ff',
+  split: '#ffff00',
+  block: '#ff6600',
+  spinner: '#ff3399',
+  smoke: '#999999',
+  lightning: '#ffcc00',
+  void: '#6600ff',
 };
 
 export class PowerUpSystem {

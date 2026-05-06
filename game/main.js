@@ -186,11 +186,7 @@ function getKeyboardSelection(playerId) {
 
 function getKeyboardSelectionText() {
   if (gameConfig.controlMode !== 'keyboard') return '';
-  const p1Buttons = getButtonsForPlayer(0);
-  const p2Buttons = getButtonsForPlayer(1);
-  const p1Index = world?.keyboardSelectedIndices?.[0] ?? 0;
-  const p2Index = world?.keyboardSelectedIndices?.[1] ?? 0;
-  return `WASD + E (toque J1) • Setas + O (toque J2) • poder: F / P`;
+  return `WASD + E (chutar J1) • Setas + O (chutar J2) • trocar: F / P`;
 }
 
 function cycleKeyboardSelection(playerId) {
@@ -207,12 +203,12 @@ function useKeyboardPower(playerId) {
   if (state !== 'playing') return;
   const player = players[playerId];
   if (!player?.activePower) return;
-  consumeKeyboardPower(player);
+  // NÃO consome ainda - será consumido ao chutar com E/O
+  // Apenas marca que está pronto para usar
 }
 
 function kickBallKeyboard(playerId) {
   if (state !== 'playing') return;
-  if (!allStopped()) return;
   
   const button = getKeyboardSelection(playerId);
   if (!button) return;
@@ -409,20 +405,20 @@ window.addEventListener('keydown', (e) => {
 
   if (e.repeat) return;
   
-  // Comandos de poder e chute (sem repetição)
-  if (code === 'KeyF') {
-    useKeyboardPower(0);
+  // Comandos de trocar botão (F/P) e chute (E/O)
+  if (code === 'KeyF' && state === 'playing') {
+    cycleKeyboardSelection(0);
     return;
   }
-  if (code === 'KeyP') {
-    useKeyboardPower(1);
+  if (code === 'KeyP' && state === 'playing') {
+    cycleKeyboardSelection(1);
     return;
   }
-  if (code === 'KeyE') {
+  if (code === 'KeyE' && state === 'playing') {
     kickBallKeyboard(0);
     return;
   }
-  if (code === 'KeyO') {
+  if (code === 'KeyO' && state === 'playing') {
     kickBallKeyboard(1);
     return;
   }
@@ -641,6 +637,16 @@ function powerLabel(type) {
     magnet: 'magneto',
     slow: 'câmera lenta',
     precision: 'precisão',
+    shield: 'escudo',
+    boost: 'acelerador',
+    freeze: 'congelamento',
+    teleport: 'teletransporte',
+    split: 'divisão',
+    block: 'bloqueio',
+    spinner: 'rotação',
+    smoke: 'fumaça',
+    lightning: 'raio',
+    void: 'vazio',
   };
   return labels[type] || type;
 }
