@@ -3,7 +3,7 @@ import { clamp, rand } from '../utils.js';
 let nextId = 1;
 
 export class Button {
-  constructor({ x, y, playerId, colors }) {
+  constructor({ x, y, playerId, colors, team }) {
     this.type = 'button';
     this.id = nextId++;
 
@@ -18,6 +18,7 @@ export class Button {
     this.vy = 0;
 
     this.colors = colors;
+    this.team = team; // Armazena o time para mostrar a bandeira
     this.lastShotAt = 0;
     this.ownerPower = null;
 
@@ -99,5 +100,17 @@ export class Button {
     ctx.arc(this.x, this.y, 4.5, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(10,16,30,.55)';
     ctx.fill();
+
+    // Desenha a bandeira do time no topo do botão
+    if (this.team) {
+      ctx.save();
+      ctx.font = 'bold 16px Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.globalAlpha = 0.95;
+      // Renderiza a bandeira como emoji
+      ctx.fillText(this.team, this.x, this.y - 3);
+      ctx.restore();
+    }
   }
 }

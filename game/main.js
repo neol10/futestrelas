@@ -34,6 +34,25 @@ const TEAM_COLORS = {
   Suécia: ['#2e6cff', '#ffd200'],
 };
 
+const TEAM_FLAGS = {
+  Brasil: '🇧🇷',
+  Argentina: '🇦🇷',
+  França: '🇫🇷',
+  Alemanha: '🇩🇪',
+  Espanha: '🇪🇸',
+  Itália: '🇮🇹',
+  Inglaterra: '🇬🇧',
+  Portugal: '🇵🇹',
+  Holanda: '🇳🇱',
+  Bélgica: '🇧🇪',
+  Uruguai: '🇺🇾',
+  México: '🇲🇽',
+  Japão: '🇯🇵',
+  EUA: '🇺🇸',
+  Croácia: '🇭🇷',
+  Suécia: '🇸🇪',
+};
+
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
@@ -152,8 +171,8 @@ function setupWorld() {
   world.goalies.push(new Goalie({ side: 'right', auto: gameConfig.goalieAuto }));
 
   const formations = createFormation();
-  for (const b of formations.p1) world.buttons.push(new Button({ ...b, playerId: 0, colors: p1Colors }));
-  for (const b of formations.p2) world.buttons.push(new Button({ ...b, playerId: 1, colors: p2Colors }));
+  for (const b of formations.p1) world.buttons.push(new Button({ ...b, playerId: 0, colors: p1Colors, team: TEAM_FLAGS[selections.p1Team] }));
+  for (const b of formations.p2) world.buttons.push(new Button({ ...b, playerId: 1, colors: p2Colors, team: TEAM_FLAGS[selections.p2Team] }));
 
   physics = new WorldPhysics({ field: FIELD });
   powerUps = new PowerUpSystem({ field: FIELD });
