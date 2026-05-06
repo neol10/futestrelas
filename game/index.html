@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Futebol de Botão 2D</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand">
+        <h1>Futebol de Botão 2D</h1>
+        <span class="subtitle">2 jogadores locais • Canvas • Física + Power-ups</span>
+      </div>
+      <div class="actions">
+        <button id="btnFullscreen" class="btn secondary" type="button">Tela cheia</button>
+        <button id="btnBack" class="btn secondary" type="button" hidden>Voltar</button>
+        <button id="btnRestart" class="btn secondary" type="button" hidden>Reiniciar</button>
+      </div>
+    </header>
+
+    <main id="main">
+      <section id="screenMenu" class="screen">
+        <h2>Menu Inicial</h2>
+        <div class="panel">
+          <div class="grid">
+            <div class="field">
+              <label for="p1Team">Jogador 1</label>
+              <select id="p1Team"></select>
+            </div>
+            <div class="field">
+              <label for="p2Team">Jogador 2</label>
+              <select id="p2Team"></select>
+            </div>
+          </div>
+          <div class="row">
+            <button id="btnGoConfig" class="btn primary" type="button">Configurar partida</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="screenConfig" class="screen" hidden>
+        <h2>Configuração da Partida</h2>
+        <div class="panel">
+          <div class="grid">
+            <div class="field">
+              <label for="controlMode">Modo de controle</label>
+              <select id="controlMode">
+                <option value="drag" selected>Arrastar e soltar</option>
+                <option value="keyboard">2 jogadores no teclado</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="matchTime">Tempo da partida</label>
+              <select id="matchTime">
+                <option value="30">30s</option>
+                <option value="60" selected>60s</option>
+                <option value="120">120s</option>
+                <option value="infinite">infinito</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="maxGoals">Máximo de gols</label>
+              <select id="maxGoals">
+                <option value="1">1</option>
+                <option value="3" selected>3</option>
+                <option value="5">5</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label class="inline">
+                <input id="powerUpsEnabled" type="checkbox" checked />
+                Ativar power-ups
+              </label>
+            </div>
+
+            <div class="field">
+              <label for="powerSpawnInterval">Frequência de spawn (s)</label>
+              <input id="powerSpawnInterval" type="range" min="3" max="20" step="1" value="8" />
+              <div class="hint"><span id="powerSpawnIntervalValue">8</span>s</div>
+            </div>
+
+            <div class="field">
+              <label for="powerDuration">Duração do power (s)</label>
+              <input id="powerDuration" type="range" min="3" max="20" step="1" value="8" />
+              <div class="hint"><span id="powerDurationValue">8</span>s</div>
+            </div>
+
+            <div class="field">
+              <label class="inline">
+                <input id="goalieAuto" type="checkbox" checked />
+                Goleiro automático
+              </label>
+            </div>
+
+            <div class="field">
+              <label class="inline">
+                <input id="soundEnabled" type="checkbox" checked />
+                Sons do jogo
+              </label>
+            </div>
+
+            <div class="field">
+              <label for="gameSpeed">Velocidade do jogo</label>
+              <input id="gameSpeed" type="range" min="0.5" max="1.5" step="0.05" value="1" />
+              <div class="hint"><span id="gameSpeedValue">1.00</span>x</div>
+            </div>
+          </div>
+
+          <div class="row">
+            <button id="btnStartMatch" class="btn primary" type="button">Iniciar partida</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="screenGame" class="screen" hidden>
+        <div id="hud" class="hud">
+          <div class="hudRow">
+            <div class="hudBox"><strong id="hudScore">0 - 0</strong></div>
+            <div class="hudBox">Tempo: <span id="hudTime">--</span></div>
+            <div class="hudBox">Turno: <span id="hudTurn">--</span></div>
+            <div class="hudBox">Power: <span id="hudPower">nenhum</span></div>
+          </div>
+          <div class="hudRow small">
+            <div class="hudBox">Status: <span id="hudStatus">--</span></div>
+            <div class="hudBox">J1 power: <span id="hudP1Power">nenhum</span></div>
+            <div class="hudBox">J2 power: <span id="hudP2Power">nenhum</span></div>
+          </div>
+          <div class="hudRow small">
+            <div class="hudBox">Config: <span id="hudConfig">--</span></div>
+          </div>
+        </div>
+
+        <div id="canvasWrap" class="canvasWrap">
+          <canvas id="gameCanvas" width="1200" height="720"></canvas>
+        </div>
+
+        <div id="popStack" class="popStack" aria-live="polite" aria-atomic="true"></div>
+
+        <div id="toast" class="toast" hidden></div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
