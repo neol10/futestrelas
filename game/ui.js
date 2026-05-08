@@ -10,6 +10,7 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
     p2Team: document.getElementById('p2Team'),
 
     btnGoConfig: document.getElementById('btnGoConfig'),
+    btnStartQuickMatch: document.getElementById('btnStartQuickMatch'),
     btnStartMatch: document.getElementById('btnStartMatch'),
     btnFullscreen: document.getElementById('btnFullscreen'),
 
@@ -47,6 +48,32 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
     const opts = teams.map((t) => `<option value="${t}">${t}</option>`).join('');
     els.p1Team.innerHTML = opts;
     els.p2Team.innerHTML = opts;
+  }
+
+  // Prevent choosing the same team for both players by auto-adjusting the other select
+  function guardTeamSelection() {
+    try {
+      els.p1Team.addEventListener('change', () => {
+        if (els.p1Team.value === els.p2Team.value) {
+          // pick next available option for p2
+          const options = Array.from(els.p2Team.options).map(o => o.value);
+          const alt = options.find(v => v !== els.p1Team.value) ?? options[0];
+          els.p2Team.value = alt;
+          toast('Seleções iguais não são permitidas, ajustado jogador 2', 800);
+        }
+      });
+      els.p2Team.addEventListener('change', () => {
+        if (els.p1Team.value === els.p2Team.value) {
+          const options = Array.from(els.p1Team.options).map(o => o.value);
+          const alt = options.find(v => v !== els.p2Team.value) ?? options[0];
+          els.p1Team.value = alt;
+          toast('Seleções iguais não são permitidas, ajustado jogador 1', 800);
+        }
+      });
+    } catch (err) {
+      // defensive: if elements are missing or runtime errors occur, log and continue
+      console.warn('guardTeamSelection failed', err);
+    }
   }
 
   function showScreen(name) {
@@ -130,7 +157,7 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
     }, Math.max(500, ttl) + 260);
   }
 
-  function syncHUD({ players, currentPlayerIndex, match, config, state, canShoot, controlMode, keyboardSelectionText, goldenGoalMode }) {
+  function syncHUD({ players, currentPlayerIndex, match, config, state, canShoot, controlMode, keyboardSelectionText, goldenGoalMode, shotCount, maxShots }) {
     els.hudScore.textContent = `${match.score[0]} - ${match.score[1]}`;
 
     if (match.infinite || match.timeLeft === Infinity) {
@@ -139,42 +166,66 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
       els.hudTime.textContent = `${Math.ceil(match.timeLeft)}s`;
     }
 
-    els.hudTurn.textContent = controlMode === 'keyboard'
-      ? (keyboardSelectionText ?? '2 jogadores no teclado')
-      : `${players[currentPlayerIndex].name} (${players[currentPlayerIndex].team})`;
-
     const p = players[currentPlayerIndex];
-    els.hudPower.textContent = formatPowerLabel(p.activePower, config.controlMode);
-    els.hudP1Power.textContent = formatPowerLabel(players[0].activePower, config.controlMode);
-    els.hudP2Power.textContent = formatPowerLabel(players[1].activePower, config.controlMode);
+    els.hudTurn.textContent = controlMode === 'keyboard'
+      ? `${p.name} (${p.team}) - ${keyboardSelectionText || ''}`
+      : `${p.name} (${p.team})`;
+
+    els.hudPower.textContent = formatPowerLabel(p, config.controlMode);
+    els.hudP1Power.textContent = formatPowerLabel(players[0], config.controlMode);
+    els.hudP2Power.textContent = formatPowerLabel(players[1], config.controlMode);
+
+    let shotsLeftText;
+    let maxShotsText;
+    if (!isFinite(maxShots)) {
+      shotsLeftText = '∞';
+      maxShotsText = '∞';
+    } else {
+      shotsLeftText = Math.max(0, maxShots - shotCount);
+      maxShotsText = maxShots;
+    }
+    const shotText = `• Chutes: ${shotsLeftText}/${maxShotsText}`;
 
     if (state === 'finished') {
       els.hudStatus.textContent = 'partida encerrada';
     } else if (goldenGoalMode) {
-      els.hudStatus.textContent = 'gol de ouro: primeiro gol vence';
+      els.hudStatus.textContent = 'gol de ouro: primeiro gol vence ' + shotText;
     } else if (controlMode === 'keyboard') {
-      els.hudStatus.textContent = canShoot ? 'modo teclado ativo' : 'botões em movimento';
+      els.hudStatus.textContent = (canShoot ? 'modo teclado ativo ' : 'botões em movimento ') + shotText;
     } else if (state === 'goalPause') {
       els.hudStatus.textContent = 'gol! reposicionando...';
     } else {
-      els.hudStatus.textContent = canShoot ? 'pronto para jogar' : 'aguardando as peças pararem';
+      els.hudStatus.textContent = (canShoot ? 'pronto para jogar ' : 'aguardando as peças pararem ') + shotText;
     }
 
     els.hudConfig.textContent = `modo=${config.controlMode === 'keyboard' ? 'teclado' : 'arrastar'} • tempo=${config.matchTime === 'infinite' ? '∞' : config.matchTime + 's'} • gols=${config.maxGoals} • powerups=${config.powerUpsEnabled ? 'on' : 'off'} • som=${config.soundEnabled ? 'on' : 'off'} • goleiro=${config.goalieAuto ? 'auto' : 'parado'} • speed=${Number(config.gameSpeed).toFixed(2)}x`;
   }
 
-  function formatPowerLabel(power, controlMode) {
-    if (!power) return 'nenhum';
+  function formatPowerLabel(player, controlMode) {
+    let label = '';
+    if (player.storedPower) {
+      label = `[${player.storedPower}] `;
+    }
+
+    const power = player.activePower;
+    if (!power) return label || 'nenhum';
+    
     if (controlMode === 'keyboard') {
       const usesLeft = typeof power.usesLeft === 'number' ? power.usesLeft : 1;
-      return `${power.type} (uso ${usesLeft})`;
+      return label + `${power.type} (ativo)`;
     }
     const timeLeft = typeof power.timeLeft === 'number' ? Math.ceil(power.timeLeft) : 0;
-    return `${power.type} (${timeLeft}s)`;
+    return label + `${power.type} (${timeLeft}s)`;
   }
 
   els.btnGoConfig.addEventListener('click', () => {
-    onGoConfig?.();
+    onGoConfig();
+    showScreen('config');
+  });
+
+  els.btnStartQuickMatch.addEventListener('click', () => {
+    onStartMatch();
+    showScreen('game');
   });
 
   els.btnBack.addEventListener('click', () => {
@@ -204,6 +255,7 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
   });
 
   fillTeams();
+  guardTeamSelection();
   syncRanges();
 
   return {

@@ -5,6 +5,8 @@ const POWER_TYPES = [
   'superShot', 'curve', 'magnet', 'slow', 'precision',
   'shield', 'boost', 'freeze', 'teleport', 'split',
   'block', 'spinner', 'smoke', 'lightning', 'void',
+  'explosion', 'bomb', 'repulsor',
+  'dash', 'gravity', 'shockwave',
   // Poderes adversários (prejudicam o adversário)
   'webSlowdown', 'reverse', 'blur', 'stun', 'drain',
   'swamp', 'zap', 'confuse'
@@ -27,6 +29,12 @@ const POWER_COLORS = {
   smoke: '#999999',
   lightning: '#ffcc00',
   void: '#6600ff',
+  explosion: '#ff5500',
+  bomb: '#333333',
+  repulsor: '#00ffff',
+  dash: '#ff8c00',
+  gravity: '#7a5cff',
+  shockwave: '#00d4ff',
   // Poderes adversários
   webSlowdown: '#cc00cc',  // roxo escuro - rede de aranha
   reverse: '#ff6644',       // laranja queimado - inverte controles
@@ -43,7 +51,7 @@ export class PowerUpSystem {
     this.field = field;
     this.active = [];
     this.spawnTimer = 0;
-    this.maxSimultaneous = 2;
+    this.maxSimultaneous = 3;
   }
 
   update(dt, world, players, currentPlayerIndex, config, callbacks = {}) {
@@ -53,12 +61,21 @@ export class PowerUpSystem {
     // atualizar poderes ativos (em players)
     for (const p of players) {
       if (!p.activePower) continue;
-      if (config.controlMode === 'keyboard') continue;
-      p.activePower.timeLeft -= dt;
-      if (p.activePower.timeLeft <= 0) {
-        const expiredType = p.activePower.type;
-        p.activePower = null;
-        callbacks.onExpire?.(expiredType, p);
+      
+      // Se for debuff ou modo mouse, usa timer
+      if (p.activePower.timeLeft !== null) {
+        p.activePower.timeLeft -= dt;
+        if (p.activePower.timeLeft <= 0) {
+          const expiredType = p.activePower.type;
+          p.activePower = null;
+          callbacks.onExpire?.(expiredType, p);
+        }
+      }
+    }
+
+    for (const p of players) {
+      if (p.activePower?.type === 'gravity') {
+        this.applyGravity(dt, world, players, p.id);
       }
     }
 
@@ -74,7 +91,7 @@ export class PowerUpSystem {
     // spawn
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
-      this.spawnTimer = Math.max(2, Number(config.powerSpawnInterval));
+      this.spawnTimer = Math.max(1.5, Number(config.powerSpawnInterval) * 0.85);
       if (this.active.length < this.maxSimultaneous) {
         const pu = this.trySpawn(world);
         if (pu) this.active.push(pu);
@@ -88,7 +105,7 @@ export class PowerUpSystem {
         const d = Math.hypot(b.x - pu.x, b.y - pu.y);
         if (d <= b.radius + pu.radius) {
           pu.collected = true;
-          this.applyPower(players[b.playerId], pu.type, config);
+          this.applyPower(players[b.playerId], pu.type, config, players, world);
           callbacks.onCollect?.(pu.type, players[b.playerId]);
         }
       }
@@ -102,14 +119,69 @@ export class PowerUpSystem {
     }
   }
 
-  applyPower(player, type, config) {
-    player.activePower = {
+  applyPower(player, type, config, players, world) {
+    const isDebuff = [
+      'webSlowdown', 'reverse', 'blur', 'stun', 'drain',
+      'swamp', 'zap', 'confuse', 'smoke', 'freeze'
+    ].includes(type);
+
+    // split e void têm efeito imediato em qualquer modo.
+    if (type === 'split') {
+      if (world && Number.isFinite(world.maxShots)) {
+        world.maxShots += 2;
+      }
+      return;
+    }
+    if (type === 'void') {
+      const opponent = players.find((p) => p.id !== player.id);
+      if (opponent) {
+        opponent.activePower = null;
+        opponent.storedPower = null;
+      }
+      return;
+    }
+
+    if (type === 'shockwave') {
+      this.applyShockwave(world, players, player.id);
+      return;
+    }
+
+    // No modo teclado, os poderes de benefício são armazenados para ativação manual.
+    if (config.controlMode === 'keyboard' && !isDebuff) {
+      player.storedPower = type;
+      return;
+    }
+
+    const targetPlayer = isDebuff ? players.find(p => p.id !== player.id) : player;
+    
+    targetPlayer.activePower = {
       type,
-      timeLeft: config.controlMode === 'keyboard' ? null : Number(config.powerDuration),
-      total: config.controlMode === 'keyboard' ? null : Number(config.powerDuration),
-      usesLeft: config.controlMode === 'keyboard' ? 1 : null,
+      timeLeft: config.controlMode === 'keyboard' ? (isDebuff ? 5.5 : null) : Number(config.powerDuration),
+      total: config.controlMode === 'keyboard' ? (isDebuff ? 5.5 : null) : Number(config.powerDuration),
+      usesLeft: config.controlMode === 'keyboard' ? (isDebuff ? null : 1) : null,
+      isDebuff: isDebuff
     };
+
+    if (type === 'bomb') {
+      targetPlayer.activePower.armed = true;
+    }
+
+    if (type === 'repulsor') {
+      targetPlayer.activePower.timeLeft = 5;
+      targetPlayer.activePower.total = 5;
+    }
+
+    if (type === 'gravity') {
+      targetPlayer.activePower.timeLeft = 6;
+      targetPlayer.activePower.total = 6;
+    }
+
+    if (type === 'dash') {
+      targetPlayer.activePower.timeLeft = 4.5;
+      targetPlayer.activePower.total = 4.5;
+    }
   }
+
 
   applyMagnet(dt, world, playerId) {
     const ball = world.ball;
@@ -139,6 +211,130 @@ export class PowerUpSystem {
     const strength = 220; // aceleração
     ball.vx += nx * strength * dt;
     ball.vy += ny * strength * dt;
+  }
+
+  applyGravity(dt, world, players, playerId) {
+    const source = this.getPrimaryButton(world, playerId);
+    if (!source) return;
+
+    const range = 320;
+    const strength = 320;
+    const falloff = 1 - Math.min(1, Math.hypot(world.ball.x - source.x, world.ball.y - source.y) / range);
+
+    const pullEntity = (entity, boost = 1) => {
+      const dx = source.x - entity.x;
+      const dy = source.y - entity.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 1 || d > range) return;
+      const t = 1 - d / range;
+      const force = strength * t * boost * dt;
+      entity.vx += (dx / d) * force;
+      entity.vy += (dy / d) * force;
+    };
+
+    pullEntity(world.ball, 1.15);
+    for (const b of world.buttons) {
+      if (b.id === source.id) continue;
+      pullEntity(b, b.playerId === playerId ? 0.95 : 0.55);
+    }
+
+    world.effects?.impacts?.push({
+      x: source.x,
+      y: source.y,
+      strength: 0.45 + falloff * 0.35,
+      radius: 16 + falloff * 20,
+      life: 0.18,
+      maxLife: 0.18,
+      color: 'rgba(122, 92, 255, 0.55)',
+    });
+  }
+
+  applyShockwave(world, players, playerId) {
+    const source = this.getPrimaryButton(world, playerId);
+    if (!source) return;
+
+    const radius = 180;
+    const force = 680;
+
+    const blast = (entity, scale = 1) => {
+      const dx = entity.x - source.x;
+      const dy = entity.y - source.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 1 || d > radius) return;
+      const t = 1 - d / radius;
+      const impulse = force * t * scale;
+      entity.vx += (dx / d) * impulse;
+      entity.vy += (dy / d) * impulse;
+    };
+
+    blast(world.ball, 1.2);
+    for (const b of world.buttons) {
+      if (b.id === source.id) continue;
+      blast(b, b.playerId === playerId ? 0.9 : 1.15);
+    }
+
+    world.effects?.impacts?.push({
+      x: source.x,
+      y: source.y,
+      strength: 0.9,
+      radius: 22,
+      life: 0.28,
+      maxLife: 0.28,
+      color: 'rgba(0, 212, 255, 0.6)',
+    });
+  }
+
+  getPrimaryButton(world, playerId) {
+    const buttons = world.buttons.filter((b) => b.playerId === playerId);
+    if (buttons.length === 0) return null;
+    const ball = world.ball;
+    let best = buttons[0];
+    let bestDist = Infinity;
+    for (const b of buttons) {
+      const d = Math.hypot(b.x - ball.x, b.y - ball.y);
+      if (d < bestDist) {
+        best = b;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  // Aplica efeitos de poder na bola após um chute
+  applyBallEffects(ball, powerType) {
+    if (!powerType) return;
+    
+    // Reset efeitos anteriores
+    ball.activeEffects = ball.activeEffects || {};
+    
+    // Efeitos que duram no tempo
+    if (powerType === 'freeze') {
+      ball.frozenTime = 1.2; 
+      ball.vx *= 0.1;
+      ball.vy *= 0.1;
+    }
+    
+    if (powerType === 'spinner') {
+      ball.spin = (Math.random() > 0.5 ? 1 : -1) * 8; 
+      ball.activeEffects.spinner = true;
+    }
+    
+    if (powerType === 'curve') {
+      ball.spin = (Math.random() > 0.5 ? 1 : -1) * 5;
+    }
+
+    if (powerType === 'lightning') {
+       ball.activeEffects.lightning = true;
+    }
+
+    if (powerType === 'dash') {
+      ball.spin *= 0.9;
+      ball.activeEffects.dash = true;
+    }
+
+    if (powerType === 'gravity') {
+      ball.activeEffects.gravity = true;
+    }
   }
 
   trySpawn(world) {
@@ -209,6 +405,13 @@ export class PowerUpSystem {
         ctx.ellipse(0, 0, radius, radius * 0.9, 0, 0, Math.PI * 2);
         ctx.fillStyle = pu.color;
         ctx.fill();
+
+        ctx.globalAlpha = 0.2;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, radius + 8, (radius + 8) * 0.95, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
 
         ctx.globalAlpha = 0.35;
         ctx.beginPath();

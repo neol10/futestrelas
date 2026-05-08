@@ -68,9 +68,17 @@ select, input[type="range"]{
 select{
   padding:10px 12px;
   border-radius:10px;
-  border:1px solid var(--border);
-  background:#08203e;
+  border:1px solid rgba(255,255,255,.15);
+  background: #08203e url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%239bc1df'%3E%3Cpath d='M2 4l4 4 4-4H2z'/%3E%3C/svg%3E") no-repeat right 12px center;
+  background-size: 12px;
   color:var(--text);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+select:focus{
+  outline: none;
+  border-color: var(--btn);
 }
 
 .hint{color:var(--muted); font-size:12px}

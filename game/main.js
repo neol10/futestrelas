@@ -53,6 +53,21 @@ const TEAM_FLAGS = {
   Suécia: '🇸🇪',
 };
 
+const DEFAULT_STATS = { curve: 1.0, power: 1.0, mass: 1.0, speed: 1.0 };
+let continueButtonHitbox = null;
+const TEAM_STATS = {
+  Brasil: { curve: 1.5, power: 1.0, mass: 1.0, speed: 1.1 },
+  Alemanha: { curve: 1.0, power: 1.25, mass: 1.1, speed: 1.0 },
+  Itália: { curve: 1.0, power: 1.0, mass: 1.3, speed: 0.9 }, // Defesa pesada
+  Espanha: { curve: 1.2, power: 1.0, mass: 1.0, speed: 1.15 }, // Passes rápidos
+  França: { curve: 1.0, power: 1.1, mass: 1.0, speed: 1.25 }, // Alta velocidade
+  Argentina: { curve: 1.3, power: 1.1, mass: 1.0, speed: 1.0 },
+  Inglaterra: { curve: 1.0, power: 1.15, mass: 1.1, speed: 1.0 },
+  Holanda: { curve: 1.1, power: 1.1, mass: 1.0, speed: 1.1 },
+};
+
+const KEYBOARD_SHOT_THRESHOLD_MS = 220;
+
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
@@ -78,6 +93,10 @@ let currentPlayerIndex = 0;
 let keyboardInput = {
   keysDown: new Set(),
 };
+let keyboardCharge = [0, 0];
+let keyboardChargeHeld = [false, false];
+let keyboardShotLatch = [false, false];
+let keyboardPassHeld = [false, false]; // Pass action (R for P1, L for P2)
 let drag = {
   active: false,
   playerIndex: 0,
@@ -87,7 +106,7 @@ let drag = {
 };
 
 let turnLock = false;
-let lastKeyboardShotTime = [0, 0]; // Rastreia último chute de cada jogador em modo teclado
+let lastKeyboardShotTime = [0, 0];
 
 let match = {
   timeLeft: 60,
@@ -99,6 +118,10 @@ let match = {
 let rafId = 0;
 let timeWarningMarks = new Set();
 let goldenGoalMode = false;
+let goalPauseTimer = 0;
+let slowMoTimer = 0;
+let netSwingTimer = 0;
+let continueButtonHitbox = null;
 
 function showMenu() {
   state = 'menu';
@@ -113,9 +136,11 @@ function showConfig() {
 }
 
 function startMatch(config, sel) {
-  selections = sel;
-  setConfig(config);
-  audio.setEnabled(!!config.soundEnabled);
+  // support quick match where UI may call without args
+  const usedConfig = config ?? createInitialConfig();
+  selections = sel ?? selections;
+  setConfig(usedConfig);
+  audio.setEnabled(!!usedConfig.soundEnabled);
 
   setupWorld();
   state = 'playing';
@@ -131,6 +156,7 @@ function restartMatch() {
   if (state === 'menu' || state === 'config') return;
   setupWorld();
   state = 'playing';
+  goalPauseTimer = 0;
   ui.toast('Reiniciado', 600);
 
   if (rafId) cancelAnimationFrame(rafId);
@@ -142,9 +168,12 @@ function setupWorld() {
   const p1Colors = TEAM_COLORS[selections.p1Team] ?? ['#2e6cff', '#ffffff'];
   const p2Colors = TEAM_COLORS[selections.p2Team] ?? ['#ff3b30', '#ffffff'];
 
+  const p1Stats = TEAM_STATS[selections.p1Team] || DEFAULT_STATS;
+  const p2Stats = TEAM_STATS[selections.p2Team] || DEFAULT_STATS;
+
   players = [
-    { id: 0, name: 'Jogador 1', team: selections.p1Team, colors: p1Colors, activePower: null },
-    { id: 1, name: 'Jogador 2', team: selections.p2Team, colors: p2Colors, activePower: null },
+    { id: 0, name: 'Jogador 1', team: selections.p1Team, colors: p1Colors, activePower: null, storedPower: null, stats: p1Stats },
+    { id: 1, name: 'Jogador 2', team: selections.p2Team, colors: p2Colors, activePower: null, storedPower: null, stats: p2Stats },
   ];
   currentPlayerIndex = 0;
 
@@ -154,25 +183,29 @@ function setupWorld() {
   match.lastTimestamp = performance.now();
   timeWarningMarks = new Set();
   goldenGoalMode = false;
+  goalPauseTimer = 0;
 
   world = {
     field: FIELD,
     ball: new Ball({ x: FIELD.width / 2, y: FIELD.height / 2 }),
     buttons: [],
     goalies: [],
-    effects: { impacts: [], goalText: null },
+    effects: { impacts: [], goalText: null, goalCelebration: null },
     activeShotPlayerId: null,
     extraTurnGranted: false,
     extraTurnGrantedPlayerId: null,
     keyboardSelectedIndices: [0, 0],
+    controlledButtonId: null,
+    shotCount: 0,
+    maxShots: gameConfig.controlMode === 'keyboard' ? Infinity : 3,
   };
 
   world.goalies.push(new Goalie({ side: 'left', auto: gameConfig.goalieAuto }));
   world.goalies.push(new Goalie({ side: 'right', auto: gameConfig.goalieAuto }));
 
   const formations = createFormation();
-  for (const b of formations.p1) world.buttons.push(new Button({ ...b, playerId: 0, colors: p1Colors, team: TEAM_FLAGS[selections.p1Team] }));
-  for (const b of formations.p2) world.buttons.push(new Button({ ...b, playerId: 1, colors: p2Colors, team: TEAM_FLAGS[selections.p2Team] }));
+  for (const b of formations.p1) world.buttons.push(new Button({ ...b, playerId: 0, colors: p1Colors, team: TEAM_FLAGS[selections.p1Team], stats: p1Stats }));
+  for (const b of formations.p2) world.buttons.push(new Button({ ...b, playerId: 1, colors: p2Colors, team: TEAM_FLAGS[selections.p2Team], stats: p2Stats }));
 
   physics = new WorldPhysics({ field: FIELD });
   powerUps = new PowerUpSystem({ field: FIELD });
@@ -180,7 +213,11 @@ function setupWorld() {
 
   drag.active = false;
   turnLock = false;
+  goalPauseTimer = 0;
   keyboardInput.keysDown.clear();
+  keyboardCharge = [0, 0];
+  keyboardChargeHeld = [false, false];
+  keyboardShotLatch = [false, false];
   ui.syncHUD({
     players,
     currentPlayerIndex,
@@ -190,7 +227,12 @@ function setupWorld() {
     canShoot: allStopped() && !drag.active,
     controlMode: gameConfig.controlMode,
     keyboardSelectionText: getKeyboardSelectionText(),
+    shotCount: world?.shotCount ?? 0,
+    maxShots: world?.maxShots ?? 3,
   });
+
+  // Seleciona automaticamente o botão mais perto da bola para o jogador atual
+  selectNearestButtonForPlayer(currentPlayerIndex);
 }
 
 function getButtonsForPlayer(playerId) {
@@ -202,6 +244,26 @@ function getKeyboardSelection(playerId) {
   if (buttons.length === 0) return null;
   const index = world?.keyboardSelectedIndices?.[playerId] ?? 0;
   return buttons[index % buttons.length] ?? buttons[0];
+}
+
+function selectNearestButtonForPlayer(playerId) {
+  if (!world) return;
+  const buttons = world.buttons.filter((b) => b.playerId === playerId);
+  if (!buttons || buttons.length === 0) return;
+  const ball = world.ball;
+  let best = buttons[0];
+  let bestDist = Math.hypot(best.x - ball.x, best.y - ball.y);
+  for (const b of buttons) {
+    const d = Math.hypot(b.x - ball.x, b.y - ball.y);
+    if (d < bestDist) {
+      best = b; bestDist = d;
+    }
+  }
+  world.controlledButtonId = best.id;
+  if (gameConfig.controlMode === 'keyboard') {
+    const idx = buttons.findIndex((x) => x.id === best.id);
+    if (typeof idx === 'number' && idx >= 0) world.keyboardSelectedIndices[playerId] = idx;
+  }
 }
 
 function getKeyboardSelectionText() {
@@ -222,39 +284,99 @@ function cycleKeyboardSelection(playerId) {
 function useKeyboardPower(playerId) {
   if (state !== 'playing') return;
   const player = players[playerId];
-  if (!player?.activePower) {
-    // Sem poder: troca de jogador em vez disso
-    cycleKeyboardSelection(playerId);
+  
+  // Se tem poder guardado, ativa agora
+  if (player?.storedPower) {
+    const type = player.storedPower;
+    player.storedPower = null;
+    
+    // Efeitos instantâneos na ativação
+    if (type === 'split') {
+      world.maxShots += 2;
+      ui.pop({ title: 'Multiplicação', message: '+2 chutes ganhos!', kind: 'success' });
+      return;
+    }
+    if (type === 'void') {
+      const opponent = players.find(p => p.id !== player.id);
+      if (opponent.activePower) {
+        opponent.activePower = null;
+        ui.pop({ title: 'Vazio', message: 'Poder do oponente anulado!', kind: 'danger' });
+      } else {
+        ui.pop({ title: 'Vazio', message: 'Nenhum poder para anular', kind: 'info' });
+      }
+      return;
+    }
+
+    if (type === 'explosion') {
+      const button = getKeyboardSelection(playerId);
+      if (button) {
+        createExplosion(button.x, button.y, 180, 1200);
+        audio.hit(1.0);
+        ui.pop({ title: 'EXPLOSÃO!', message: `${player.name} detonou tudo!`, kind: 'danger' });
+      }
+      return;
+    }
+
+    if (type === 'bomb') {
+      player.activePower = { type: 'bomb', armed: true, usesLeft: 1 };
+      ui.pop({ title: 'Bomba Armada!', message: 'Próximo contato será explosivo', kind: 'warning' });
+      return;
+    }
+
+    if (type === 'repulsor') {
+      player.activePower = { type: 'repulsor', timeLeft: 4, total: 4 };
+      ui.pop({ title: 'Repulsor Ativo', message: 'Nada chega perto de você!', kind: 'info' });
+      return;
+    }
+
+    player.activePower = {
+      type,
+      timeLeft: null,
+      total: null,
+      usesLeft: 1,
+      isDebuff: false
+    };
+    
+    audio.power(type);
+    ui.pop({ title: 'Poder Ativado!', message: `${player.name} ativou ${powerLabel(type)}`, kind: 'success' });
     return;
   }
-  // Tem poder: usa imediatamente
-  consumeKeyboardPower(player);
-  audio.power(player.activePower.type);
+  
+  // Se não tem poder, apenas troca o botão selecionado
+  cycleKeyboardSelection(playerId);
 }
 
-function kickBallKeyboard(playerId) {
+function kickBallKeyboard(playerId, duration) {
   if (state !== 'playing') return;
-  if (turnLock) return; // Evita chutes simultâneos
+  if (turnLock) return;
   
-  // Cooldown de 600ms entre chutes (para evitar spam)
   const now = performance.now();
-  if (now - lastKeyboardShotTime[playerId] < 600) return;
+  if (now - lastKeyboardShotTime[playerId] < 150) return; // Reduzido para maior responsividade
   
   const button = getKeyboardSelection(playerId);
   if (!button) return;
   
-  // Calcula direção aproximada em relação à bola
+  // Define se é passe ou chute baseado no tempo (curto = passe, longo = chute)
+  const isShoot = duration >= KEYBOARD_SHOT_THRESHOLD_MS;
+  let dirx, diry, basePower;
+
+  // No modo teclado, tanto passe quanto chute miram na bola.
   const dx = world.ball.x - button.x;
   const dy = world.ball.y - button.y;
-  const dist = Math.hypot(dx, dy);
-  
-  if (dist < 1) return; // evita divisão por zero
-  
-  let dirx = dx / dist;
-  let diry = dy / dist;
-  
-  // Aplica força do chute com power-up
-  const basePower = 800; // força base para toque
+  const dist = Math.hypot(dx, dy) || 1;
+  dirx = dx / dist;
+  diry = dy / dist;
+
+  if (isShoot) {
+    const charge = Math.min(1.0, duration / 750);
+    basePower = 800 + charge * 1000;
+    ui.toast('CHUTE!', 400);
+  } else {
+    basePower = 580;
+    ui.toast('PASSE', 400);
+  }
+
+  // Aplica física e poderes
   const power = button.computeShotPower(basePower, players[playerId]?.activePower);
   const aim = button.applyAimAssist({ x: dirx, y: diry }, players[playerId]?.activePower);
   dirx = aim.x;
@@ -264,12 +386,18 @@ function kickBallKeyboard(playerId) {
   button.vx += dirx * power;
   button.vy += diry * power;
   button.lastShotAt = performance.now();
-  turnLock = true;
-  world.activeShotPlayerId = playerId;
-  world.extraTurnGranted = false;
-  world.extraTurnGrantedPlayerId = null;
+  
+  // Apenas bloqueia turno se realmente gastou chute
+  if (world.shotCount < world.maxShots) {
+    world.activeShotPlayerId = playerId;
+    world.extraTurnGranted = false;
+    world.extraTurnGrantedPlayerId = null;
+    world.shotCount++;
+    if (world.shotCount >= world.maxShots) turnLock = true;
+  }
   
   if (players[playerId]?.activePower) {
+    powerUps.applyBallEffects(world.ball, players[playerId].activePower.type);
     consumeKeyboardPower(players[playerId]);
   }
   
@@ -324,7 +452,7 @@ function toWorldCoords(clientX, clientY) {
 }
 
 function allStopped() {
-  const threshold = 0.025;
+  const threshold = 0.045; // Relaxado um pouco para evitar travas
   if (Math.hypot(world.ball.vx, world.ball.vy) > threshold) return false;
   for (const b of world.buttons) {
     if (Math.hypot(b.vx, b.vy) > threshold) return false;
@@ -358,6 +486,7 @@ canvas.addEventListener('pointerdown', (e) => {
   drag.active = true;
   drag.playerIndex = currentPlayerIndex;
   drag.buttonId = b.id;
+  world.controlledButtonId = b.id;
   drag.start = { x: p.x, y: p.y };
   drag.now = { x: p.x, y: p.y };
   canvas.setPointerCapture(e.pointerId);
@@ -375,6 +504,14 @@ canvas.addEventListener('pointerup', () => {
   const b = world.buttons.find((x) => x.id === drag.buttonId);
   if (!b) {
     drag.active = false;
+    world.controlledButtonId = null;
+    return;
+  }
+
+  // Bloqueia se já fez o máximo de chutes neste turno
+  if (world.shotCount >= world.maxShots) {
+    drag.active = false;
+    world.controlledButtonId = null;
     return;
   }
 
@@ -385,6 +522,7 @@ canvas.addEventListener('pointerup', () => {
   const pull = Math.min(290, dist);
   if (pull < 8) {
     drag.active = false;
+    world.controlledButtonId = null;
     return;
   }
 
@@ -404,18 +542,38 @@ canvas.addEventListener('pointerup', () => {
   world.activeShotPlayerId = currentPlayerIndex;
   world.extraTurnGranted = false;
   world.extraTurnGrantedPlayerId = null;
+  world.shotCount++;
 
-  if (gameConfig.controlMode === 'keyboard' && players[currentPlayerIndex]?.activePower) {
+  const shotPower = players[currentPlayerIndex]?.activePower;
+  if (shotPower) {
+    powerUps.applyBallEffects(world.ball, shotPower.type);
     consumeKeyboardPower(players[currentPlayerIndex]);
   }
 
   audio.kick(power / 1300);
 
   drag.active = false;
+  world.controlledButtonId = null;
 });
 
 canvas.addEventListener('pointercancel', () => {
   drag.active = false;
+  if (world) world.controlledButtonId = null;
+});
+
+canvas.addEventListener('click', (e) => {
+  // Handle continue button in goal celebration overlay
+  if (state === 'goalPause' && continueButtonHitbox && continueButtonHitbox.visible) {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+    
+    if (clickX >= continueButtonHitbox.x && clickX <= continueButtonHitbox.x + continueButtonHitbox.w &&
+        clickY >= continueButtonHitbox.y && clickY <= continueButtonHitbox.y + continueButtonHitbox.h) {
+      goalPauseTimer = 0;
+      e.preventDefault();
+    }
+  }
 });
 
 window.addEventListener('keydown', (e) => {
@@ -446,11 +604,21 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (code === 'KeyE' && state === 'playing') {
-    kickBallKeyboard(0);
+    keyboardChargeHeld[0] = true;
     return;
   }
   if (code === 'KeyO' && state === 'playing') {
-    kickBallKeyboard(1);
+    keyboardChargeHeld[1] = true;
+    return;
+  }
+  
+  // Pass actions: R for P1 (WASD), L for P2 (Arrows)
+  if (code === 'KeyR' && state === 'playing') {
+    keyboardPassHeld[0] = true;
+    return;
+  }
+  if (code === 'KeyL' && state === 'playing') {
+    keyboardPassHeld[1] = true;
     return;
   }
   
@@ -459,11 +627,39 @@ window.addEventListener('keydown', (e) => {
   if (state !== 'playing') return;
 });
 
+// fallback: permitir forçar continuar após celebração/pause de gol
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && state === 'goalPause') {
+    console.info('Space pressed during goalPause — forcing resume');
+    goalPauseTimer = 0;
+  }
+});
+
 window.addEventListener('keyup', (e) => {
-  keyboardInput.keysDown.delete(e.code);
+  const code = e.code;
+  if (code === 'KeyE') {
+    keyboardChargeHeld[0] = false;
+    keyboardShotLatch[0] = false;
+    keyboardCharge[0] = 0;
+  }
+  if (code === 'KeyO') {
+    keyboardChargeHeld[1] = false;
+    keyboardShotLatch[1] = false;
+    keyboardCharge[1] = 0;
+  }
+  if (code === 'KeyR') {
+    keyboardPassHeld[0] = false;
+  }
+  if (code === 'KeyL') {
+    keyboardPassHeld[1] = false;
+  }
+  keyboardInput.keysDown.delete(code);
 });
 
 document.addEventListener('game:toggle-fullscreen', toggleFullscreen);
+window.addEventListener('game:explosion', (e) => {
+  createExplosion(e.detail.x, e.detail.y, 220, 1400);
+});
 
 // Wire fullscreen button
 const btnFullscreen = document.getElementById('btnFullscreen');
@@ -479,10 +675,77 @@ ui.setConfig(createInitialConfig());
 showMenu();
 
 function update(dt) {
-  if (!world) return;
+  try {
+    if (!world) return;
 
-  const speed = Number(gameConfig.gameSpeed);
-  dt *= speed;
+    const gameSpeed = Number(gameConfig.gameSpeed);
+    
+    // Apply slow-mo effect (fixed - don't compound multipliers)
+    let effectiveDt = dt;
+    if (slowMoTimer > 0) {
+      slowMoTimer -= dt;
+      effectiveDt *= 0.3; // Fixed slow-mo factor
+    }
+    
+    effectiveDt *= gameSpeed;
+    dt = effectiveDt;
+
+  if (state === 'goalPause') {
+    // decrement and recover from invalid values
+    if (typeof goalPauseTimer !== 'number' || !isFinite(goalPauseTimer) || goalPauseTimer <= 0) {
+      // safety: if timer is already expired or invalid, resume immediately
+      try {
+        physics.resetPositions(world);
+      } catch (e) {
+        console.warn('physics.resetPositions failed during goal recovery', e);
+      }
+      if (world) {
+        world.activeShotPlayerId = null;
+        world.extraTurnGranted = false;
+        world.extraTurnGrantedPlayerId = null;
+        if (world.effects) world.effects.goalCelebration = null;
+        world.shotCount = 0;
+        world.maxShots = gameConfig.controlMode === 'keyboard' ? Infinity : 3;
+      }
+      turnLock = false;
+      state = 'playing';
+      goalPauseTimer = 0;
+    } else {
+      goalPauseTimer -= dt;
+
+      // safety clamp: if timer grows absurdly (bug), force resume
+      if (goalPauseTimer > 15) {
+        console.warn('goalPauseTimer unusually large, forcing resume', goalPauseTimer);
+        goalPauseTimer = 0;
+      }
+
+      if (goalPauseTimer <= 0) {
+        try {
+          physics.resetPositions(world);
+        } catch (e) {
+          console.warn('physics.resetPositions failed during goal resume', e);
+        }
+        if (world) {
+          world.activeShotPlayerId = null;
+          world.extraTurnGranted = false;
+          world.extraTurnGrantedPlayerId = null;
+          if (world.effects) world.effects.goalCelebration = null;
+          world.shotCount = 0;
+          world.maxShots = gameConfig.controlMode === 'keyboard' ? Infinity : 3;
+        }
+        turnLock = false;
+        state = 'playing';
+        goalPauseTimer = 0;
+      }
+    }
+  }
+  } catch (err) {
+    console.error('Unexpected error in update loop:', err);
+    // Try to recover to a playable state
+    try { if (world && physics) physics.resetPositions(world); } catch (e) { console.warn('Recovery resetPositions failed', e); }
+    state = 'playing';
+    goalPauseTimer = 0;
+  }
 
   if (state === 'playing') {
     if (gameConfig.controlMode === 'keyboard') {
@@ -514,6 +777,19 @@ function update(dt) {
             ttl: 1800,
           });
         }
+
+        if (type === 'split' && gameConfig.controlMode !== 'keyboard') {
+          world.maxShots += 2;
+          ui.pop({ title: 'Multiplicação', message: '+2 chutes ganhos!', kind: 'success' });
+        }
+
+        if (type === 'void' && gameConfig.controlMode !== 'keyboard') {
+          const opponent = players.find(p => p.id !== player.id);
+          if (opponent.activePower) {
+            opponent.activePower = null;
+            ui.pop({ title: 'Vazio', message: 'Poder do oponente anulado!', kind: 'danger' });
+          }
+        }
       },
       onExpire: (type, player) => {
         ui.pop({
@@ -525,7 +801,57 @@ function update(dt) {
       },
     });
 
+    for (const button of world.buttons) {
+      const isKeyboardControlled = gameConfig.controlMode === 'keyboard' && world.keyboardSelectedIndices?.[button.playerId] != null
+        && getKeyboardSelection(button.playerId) === button;
+      const isDraggedButton = world.controlledButtonId != null && button.id === world.controlledButtonId;
+      if (!isKeyboardControlled && !isDraggedButton) {
+        button.applyIdleWander(dt);
+      }
+    }
+
     for (const g of world.goalies) g.update(dt, world, gameConfig);
+
+    // Power-ups em tempo real no loop principal
+    for (const p of players) {
+      if (p.activePower?.type === 'repulsor') {
+        const button = getKeyboardSelection(p.id);
+        if (button) applyRepulsion(button, 160, 550 * dt);
+      }
+      if (p.activePower?.type === 'magnet') {
+        const buttons = getButtonsForPlayer(p.id);
+        for (const b of buttons) applyAttraction(b, world.ball, 250, 400 * dt);
+      }
+      if (p.activePower?.type === 'zap' && Math.random() < 0.05) {
+         // Pequenos choques aleatórios tiram velocidade
+         const buttons = getButtonsForPlayer(p.id);
+         for (const b of buttons) { b.vx *= 0.5; b.vy *= 0.5; }
+      }
+    }
+
+    for (const p of players) {
+      if (p.activePower?.type === 'gravity') {
+        const buttons = getButtonsForPlayer(p.id);
+        const anchor = gameConfig.controlMode === 'keyboard' ? getKeyboardSelection(p.id) : buttons[0];
+        if (!anchor) continue;
+
+        for (const b of world.buttons) {
+          const isFriendly = b.playerId === p.id;
+          const dx = anchor.x - b.x;
+          const dy = anchor.y - b.y;
+          const dist = Math.hypot(dx, dy);
+          const range = 250;
+          if (dist <= 4 || dist > range) continue;
+          const pull = (1 - dist / range) * 220 * dt;
+          b.vx += (dx / dist) * pull * (isFriendly ? 1.1 : 0.8);
+          b.vy += (dy / dist) * pull * (isFriendly ? 1.1 : 0.8);
+        }
+      }
+    }
+
+    updateCautiousBotTouches(dt);
+
+    stabilizeControlledButtons(dt);
 
     physics.step(dt, world, gameConfig, (impact) => {
       world.effects.impacts.push(impact);
@@ -533,12 +859,19 @@ function update(dt) {
       if (impact.strength > 0.18) audio.hit(impact.strength);
     });
 
-    const goal = physics.checkGoal(world);
-    if (goal) {
-      handleGoal(goal.scorer);
+    try {
+      const goal = physics.checkGoal(world);
+      if (goal) {
+        handleGoal(goal.scorer);
+      }
+    } catch (err) {
+      console.error('Error while checking/handling goal:', err);
+      // Recover gracefully to avoid freezing the game
+      if (typeof goalPauseTimer === 'number') goalPauseTimer = 0;
+      state = 'playing';
     }
 
-    if (gameConfig.controlMode !== 'keyboard' && turnLock && allStopped() && !drag.active && state === 'playing') {
+    if (turnLock && allStopped() && !drag.active && state === 'playing') {
       if (world.extraTurnGranted && world.extraTurnGrantedPlayerId === currentPlayerIndex) {
         world.extraTurnGranted = false;
         world.extraTurnGrantedPlayerId = null;
@@ -550,19 +883,21 @@ function update(dt) {
           kind: 'success',
           ttl: 1800,
         });
-      } else {
-        // alterna turno automaticamente quando tudo para
-        currentPlayerIndex = 1 - currentPlayerIndex;
+        } else if (world.shotCount < world.maxShots) {
+        // Ainda tem chutes no turno
+        turnLock = false;
         world.activeShotPlayerId = null;
+      } else {
+        // Alterna turno
+        currentPlayerIndex = 1 - currentPlayerIndex;
+        selectNearestButtonForPlayer(currentPlayerIndex);
+        world.activeShotPlayerId = null;
+        world.shotCount = 0;
+        world.maxShots = gameConfig.controlMode === 'keyboard' ? Infinity : 3; // Reseta para padrão ou infinito no modo teclado
         turnLock = false;
       }
     }
 
-    // Em modo teclado, reseta turnLock quando tudo parou
-    if (gameConfig.controlMode === 'keyboard' && turnLock && allStopped() && state === 'playing') {
-      turnLock = false;
-      world.activeShotPlayerId = null;
-    }
 
     function toggleFullscreen() {
       const target = document.documentElement;
@@ -588,12 +923,18 @@ function update(dt) {
       controlMode: gameConfig.controlMode,
       keyboardSelectionText: getKeyboardSelectionText(),
       goldenGoalMode,
+      shotCount: world.shotCount,
+      maxShots: world.maxShots,
     });
   }
 
   // efeitos visuais
   camera.shake = Math.max(0, camera.shake - dt * 20);
-  world.effects.impacts = world.effects.impacts.filter((i) => (i.life -= dt) > 0);
+  world.effects.impacts = world.effects.impacts.filter((i) => {
+    if (i.vx) i.x += i.vx * dt;
+    if (i.vy) i.y += i.vy * dt;
+    return (i.life -= dt) > 0;
+  });
 }
 
 function updateKeyboardControls(dt) {
@@ -611,18 +952,249 @@ function updateKeyboardControls(dt) {
     const down = keyboardInput.keysDown.has(control.down) ? 1 : 0;
     const right = keyboardInput.keysDown.has(control.right) ? 1 : 0;
 
-    const dx = right - left;
-    const dy = down - up;
+    const hasReverse = players[control.playerId]?.activePower?.type === 'reverse';
+    const mult = hasReverse ? -1 : 1;
+
+    let accelMult = 1;
+    let speedMult = 1;
+    const power = players[control.playerId]?.activePower;
+    if (power?.type === 'boost') { accelMult = 1.6; speedMult = 1.5; }
+    if (power?.type === 'webSlowdown') { accelMult = 0.6; speedMult = 0.6; }
+    if (power?.type === 'swamp') { accelMult = 0.7; speedMult = 0.7; }
+    if (power?.type === 'stun' || power?.type === 'freeze') { accelMult = 0; speedMult = 0; }
+
+    const dx = (right - left) * mult;
+    const dy = (down - up) * mult;
     if (dx === 0 && dy === 0) continue;
 
-    const accel = 920;
+    const accel = 1080 * accelMult;
     button.vx += dx * accel * dt;
     button.vy += dy * accel * dt;
 
-    const clamped = clampMagnitude(button.vx, button.vy, 240);
+    const maxSpeed = 260 * speedMult;
+    const clamped = clampMagnitude(button.vx, button.vy, maxSpeed);
     button.vx = clamped.vx;
     button.vy = clamped.vy;
+
+    if (keyboardChargeHeld[control.playerId]) {
+      keyboardCharge[control.playerId] = Math.min(1, keyboardCharge[control.playerId] + dt / 0.85);
+      maybeReleaseKeyboardKick(control.playerId, button);
+    } else {
+      keyboardCharge[control.playerId] = 0;
+      keyboardShotLatch[control.playerId] = false;
+    }
+    
+    // Pass action (R for P1, L for P2)
+    if (keyboardPassHeld[control.playerId]) {
+      performKeyboardPass(control.playerId, button);
+      keyboardPassHeld[control.playerId] = false; // Single-tap action
+    }
   }
+}
+
+function updateCautiousBotTouches(dt) {
+  if (!world || state !== 'playing') return;
+
+  const ball = world.ball;
+  const now = performance.now();
+  const touchDistance = ball.radius + 18;
+
+  for (const button of world.buttons) {
+    const player = players[button.playerId];
+    if (!player) continue;
+
+    const isDraggedButton = drag.active && button.id === drag.buttonId;
+    const isKeyboardButton = gameConfig.controlMode === 'keyboard' && getKeyboardSelection(button.playerId) === button;
+    if (isDraggedButton || isKeyboardButton) continue;
+
+    if (player.activePower?.type === 'stun' || player.activePower?.type === 'freeze') continue;
+    if (now - button.botActionAt < 700) continue;
+
+    const dx = ball.x - button.x;
+    const dy = ball.y - button.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > button.radius + touchDistance) continue;
+    if (Math.hypot(ball.vx, ball.vy) > 520) continue;
+
+    const teammates = getButtonsForPlayer(button.playerId).filter((candidate) => candidate.id !== button.id);
+    let target = null;
+
+    if (teammates.length > 0) {
+      target = teammates.reduce((best, candidate) => {
+        if (!best) return candidate;
+        const bestScore = Math.hypot(best.x - ball.x, best.y - ball.y);
+        const candidateScore = Math.hypot(candidate.x - ball.x, candidate.y - ball.y);
+        return candidateScore < bestScore ? candidate : best;
+      }, null);
+    }
+
+    const goalX = button.playerId === 0 ? FIELD.width : 0;
+    const goalY = FIELD.height / 2;
+    
+    // AI difficulty settings
+    const difficultySettings = {
+      easy: { passChance: 0.5 },
+      normal: { passChance: 0.3 },
+      hard: { passChance: 0.15 },
+    };
+    const difficulty = gameConfig.aiDifficulty || 'normal';
+    const settings = difficultySettings[difficulty] || difficultySettings.normal;
+    
+    // Tactical decision: pass or shoot?
+    let shouldPass = false;
+    const passRoll = Math.random();
+    if (target && passRoll < settings.passChance) {
+      shouldPass = true;
+    }
+    
+    let targetX, targetY;
+    let shotPowerMult = 1;
+
+    if (shouldPass && target) {
+      targetX = target.x;
+      targetY = target.y;
+      shotPowerMult = 0.35; // Gentler for passes
+    } else {
+      targetX = goalX;
+      targetY = goalY;
+      shotPowerMult = 0.65; // Stronger for shots
+    }
+
+    let shotDx = targetX - button.x;
+    let shotDy = targetY - button.y;
+    let shotDist = Math.hypot(shotDx, shotDy) || 1;
+    shotDx /= shotDist;
+    shotDy /= shotDist;
+
+    const basePull = 72 + Math.random() * 64;
+    const gentlePower = button.computeShotPower(basePull, player.activePower) * shotPowerMult;
+    const distanceToGoal = Math.hypot(goalX - button.x, goalY - button.y);
+    const aim = button.applyAimAssist({ x: shotDx, y: shotDy }, player.activePower, distanceToGoal, gentlePower);
+
+    ball.vx += aim.x * gentlePower;
+    ball.vy += aim.y * gentlePower;
+    ball.spin += (Math.random() > 0.5 ? 1 : -1) * 0.6;
+    button.vx -= aim.x * gentlePower * 0.045;
+    button.vy -= aim.y * gentlePower * 0.045;
+    button.lastShotAt = now;
+    button.botActionAt = now;
+
+    if (world.effects) {
+      world.effects.impacts.push({
+        x: (button.x + ball.x) / 2,
+        y: (button.y + ball.y) / 2,
+        strength: 0.25,
+        radius: 10,
+        life: 0.16,
+        maxLife: 0.16,
+        color: player.colors?.[0] ?? 'rgba(255,255,255,.7)',
+      });
+    }
+
+    audio.kick(gentlePower / 1300, shouldPass ? 'pass' : 'shoot');
+  }
+}
+
+function hasMovementKeysForPlayer(playerId) {
+  if (playerId === 0) {
+    return keyboardInput.keysDown.has('KeyW') || keyboardInput.keysDown.has('KeyA') || keyboardInput.keysDown.has('KeyS') || keyboardInput.keysDown.has('KeyD');
+  }
+  return keyboardInput.keysDown.has('ArrowUp') || keyboardInput.keysDown.has('ArrowLeft') || keyboardInput.keysDown.has('ArrowDown') || keyboardInput.keysDown.has('ArrowRight');
+}
+
+function stabilizeControlledButtons(dt) {
+  if (!world) return;
+
+  const brakePerSecond = 0.60; // multiplier per 1 second (0.6 => stronger, quicker stop)
+  const mul = Math.pow(brakePerSecond, dt * 60);
+
+  for (const b of world.buttons) {
+    // skip AI-controlled or frozen
+    if (b.vx === 0 && b.vy === 0) continue;
+
+    const isDragged = drag.active && drag.buttonId === b.id;
+    const isExplicitControlled = world.controlledButtonId === b.id;
+    const isKeyboardSelected = gameConfig.controlMode === 'keyboard' && getKeyboardSelection(b.playerId) === b;
+
+    let shouldBrake = false;
+    if (isDragged || isExplicitControlled) {
+      // if the player isn't actively dragging (or drag finished), brake
+      shouldBrake = !isDragged;
+    }
+
+    if (isKeyboardSelected) {
+      // brake when no movement keys are pressed for this player
+      if (!hasMovementKeysForPlayer(b.playerId)) shouldBrake = true;
+    }
+
+    if (shouldBrake) {
+      b.vx *= mul;
+      b.vy *= mul;
+      // clamp tiny velocities to zero
+      if (Math.hypot(b.vx, b.vy) < 6) { b.vx = 0; b.vy = 0; }
+    }
+  }
+}
+
+function maybeReleaseKeyboardKick(playerId, button) {
+  if (!world || state !== 'playing') return;
+  if (keyboardShotLatch[playerId]) return;
+
+  const ball = world.ball;
+  // Margem de contato aumentada para tornar o chute de teclado muito mais confiável
+  const contactDistance = button.radius + ball.radius + 18; 
+  const dist = Math.hypot(button.x - ball.x, button.y - ball.y);
+  if (dist > contactDistance) return;
+
+  const charge = keyboardCharge[playerId];
+  if (charge < 0.04) return;
+
+  const kickPower = 320 + charge * 980;
+  let dirx = ball.x - button.x;
+  let diry = ball.y - button.y;
+  let mag = Math.hypot(dirx, diry);
+
+  if (mag < 0.001) {
+    mag = Math.hypot(button.vx, button.vy);
+    if (mag > 0.001) {
+      dirx = button.vx / mag;
+      diry = button.vy / mag;
+    } else {
+      const goalX = playerId === 0 ? FIELD.width : 0;
+      const goalY = FIELD.height / 2;
+      dirx = goalX - button.x;
+      diry = goalY - button.y;
+      mag = Math.hypot(dirx, diry) || 1;
+      dirx /= mag;
+      diry /= mag;
+    }
+  } else {
+    dirx /= mag;
+    diry /= mag;
+  }
+
+  const power = button.computeShotPower(kickPower, players[playerId]?.activePower);
+  const aim = button.applyAimAssist({ x: dirx, y: diry }, players[playerId]?.activePower);
+  ball.vx += aim.x * power;
+  ball.vy += aim.y * power;
+  ball.spin += (button.vx - button.vy) * 0.002;
+
+  // mark the shot so turn logic and shot counters behave like a normal kick
+  world.activeShotPlayerId = playerId;
+  world.shotCount = (world.shotCount || 0) + 1;
+  turnLock = true;
+  lastKeyboardShotTime[playerId] = performance.now();
+
+  if (players[playerId]?.activePower) {
+    powerUps.applyBallEffects(ball, players[playerId].activePower.type);
+    consumeKeyboardPower(players[playerId]);
+  }
+
+  audio.kick(power / 1300);
+  ui.toast('CHUTE!', 320);
+  keyboardShotLatch[playerId] = true;
+  keyboardCharge[playerId] = 0;
+  keyboardChargeHeld[playerId] = false;
 }
 
 function consumeKeyboardPower(player) {
@@ -640,6 +1212,47 @@ function consumeKeyboardPower(player) {
       ttl: 1700,
     });
   }
+}
+
+function performKeyboardPass(playerId, button) {
+  if (!world || state !== 'playing') return;
+  if (!button) return;
+
+  const ball = world.ball;
+  const contactDistance = button.radius + ball.radius + 18;
+  const dist = Math.hypot(button.x - ball.x, button.y - ball.y);
+  if (dist > contactDistance) return;
+
+  // Find teammate
+  const teammates = getButtonsForPlayer(playerId).filter((b) => b.id !== button.id);
+  if (teammates.length === 0) return;
+
+  const target = teammates[0]; // Pass to first teammate
+  let dirx = target.x - button.x;
+  let diry = target.y - button.y;
+  const mag = Math.hypot(dirx, diry) || 1;
+  dirx /= mag;
+  diry /= mag;
+
+  // Pass power (lower than shot)
+  const passPower = button.computeShotPower(150, players[playerId]?.activePower) * 0.4;
+  const aim = button.applyAimAssist({ x: dirx, y: diry }, players[playerId]?.activePower, mag, passPower);
+  
+  ball.vx += aim.x * passPower;
+  ball.vy += aim.y * passPower;
+  ball.spin += (Math.random() > 0.5 ? 1 : -1) * 0.3;
+
+  world.activeShotPlayerId = playerId;
+  world.shotCount = (world.shotCount || 0) + 1;
+  turnLock = true;
+
+  if (players[playerId]?.activePower) {
+    powerUps.applyBallEffects(ball, players[playerId].activePower.type);
+    consumeKeyboardPower(players[playerId]);
+  }
+
+  audio.kick(passPower / 1300, 'pass');
+  ui.toast('PASSE!', 320);
 }
 
 function toggleFullscreen() {
@@ -676,6 +1289,7 @@ function powerLabel(type) {
     precision: 'precisão',
     shield: 'escudo',
     boost: 'acelerador',
+    dash: 'arrancada',
     freeze: 'congelamento',
     teleport: 'teletransporte',
     split: 'divisão',
@@ -684,6 +1298,8 @@ function powerLabel(type) {
     smoke: 'fumaça',
     lightning: 'raio',
     void: 'vazio',
+    gravity: 'gravidade',
+    shockwave: 'onda de choque',
     // Poderes adversários
     webSlowdown: 'teia de aranha',
     reverse: 'inverter',
@@ -719,6 +1335,15 @@ function startGoldenGoal() {
 
 function finishWithWinner(winnerIndex) {
   if (state === 'finished') return;
+  if (world?.effects) {
+    world.effects.goalCelebration = {
+      scorerIndex: winnerIndex,
+      startAt: performance.now(),
+      duration: 600,
+      color: players[winnerIndex]?.colors?.[0] ?? '#ffffff',
+      scoreText: `${match.score[0]} - ${match.score[1]}`,
+    };
+  }
   state = 'finished';
   audio.goal();
   ui.toast(`${players[winnerIndex].name} venceu!`, 1600);
@@ -745,19 +1370,53 @@ function handleGoal(scorerIndex) {
 
   // após gol, o saque é de quem sofreu o gol.
   currentPlayerIndex = 1 - scorerIndex;
+  selectNearestButtonForPlayer(currentPlayerIndex);
   state = 'goalPause';
-  ui.toast('GOL!', 900);
+  audio.goal();
+  audio.goalVoice();
+  audio.applause();
+  ui.toast('GOL!', 1200);
 
-  // pausa curta + reset
-  setTimeout(() => {
-    if (!world) return;
-    physics.resetPositions(world);
-    world.activeShotPlayerId = null;
-    world.extraTurnGranted = false;
-    world.extraTurnGrantedPlayerId = null;
-    turnLock = false;
-    state = 'playing';
-  }, 900);
+  if (world?.effects) {
+    world.effects.goalCelebration = {
+      scorerIndex,
+      startAt: performance.now(),
+      duration: 600,
+      color: players[scorerIndex]?.colors?.[0] ?? '#ffffff',
+      scoreText: `${match.score[0]} - ${match.score[1]}`,
+    };
+  }
+  
+  // Slow-mo replay effect
+  slowMoTimer = 0.3;
+  slowMoSpeed = 0.3;
+  netSwingTimer = 1.0;
+
+  // Efeito de partículas de gol - mais partículas e impacto
+  if (world) {
+    const scorerColor = players[scorerIndex].colors[0];
+    const goalX = scorerIndex === 0 ? FIELD.width - 20 : 20;
+    const goalY = FIELD.height / 2;
+    
+    // Burst effect with more particles
+    for (let i = 0; i < 60; i++) {
+      const angle = (i / 60) * Math.PI * 2;
+      const distance = 80 + Math.random() * 120;
+      world.effects.impacts.push({
+        x: goalX,
+        y: goalY + (Math.random() - 0.5) * 100,
+        strength: Math.random() * 2.5,
+        radius: 6 + Math.random() * 12,
+        life: 1.0 + Math.random() * 1.0,
+        maxLife: 2.0,
+        color: Math.random() > 0.4 ? scorerColor : '#ffffff',
+        vx: Math.cos(angle) * distance * 1.2 + (Math.random() - 0.5) * 200,
+        vy: Math.sin(angle) * distance * 1.2 + (Math.random() - 0.5) * 200,
+      });
+    }
+  }
+
+  goalPauseTimer = 0.4;
 }
 
 function render() {
@@ -784,6 +1443,8 @@ function render() {
   } else {
     renderTopDown(ox, oy);
   }
+
+  drawGoalCelebrationOverlay();
 }
 
 function renderTopDown(ox, oy) {
@@ -793,11 +1454,32 @@ function renderTopDown(ox, oy) {
 
   drawField(ctx, FIELD);
   powerUps.render(ctx, world);
+  
+  // Efeito de Fumaça (Debuff)
+  for (const p of players) {
+    if (p.activePower?.type === 'smoke' && p.activePower.isDebuff) {
+      drawSmokeEffect(ctx, p.id);
+    }
+  }
 
   for (const g of world.goalies) g.render(ctx);
-  for (const b of world.buttons) b.render(ctx);
+  for (const b of world.buttons) {
+    const player = players[b.playerId];
+    b.render(ctx, player?.activePower);
+  }
   drawCurrentTurnGlow(ctx, world.buttons);
   drawKeyboardSelectionGlow(ctx, world.buttons, null);
+  drawKeyboardAimPreview(ctx, null);
+  
+  // Barra de força
+  if (gameConfig.controlMode === 'keyboard') {
+    for (const playerId of [0, 1]) {
+      if (keyboardCharge[playerId] <= 0) continue;
+      const button = getKeyboardSelection(playerId);
+      if (button) drawPowerBar(ctx, button, keyboardCharge[playerId]);
+    }
+  }
+  
   world.ball.render(ctx);
 
   for (const i of world.effects.impacts) {
@@ -823,12 +1505,21 @@ function renderPerspective(ox, oy) {
 
   powerUps.render(ctx, world, { project });
 
+  // Fumaça em perspectiva
+  for (const p of players) {
+    if (p.activePower?.type === 'smoke' && p.activePower.isDebuff) {
+      drawPerspectiveSmokeEffect(ctx, p.id, project);
+    }
+  }
+
   for (const g of world.goalies) drawProjectedEntity(ctx, g, project, { fill: 'rgba(245,245,245,.86)', outline: 'rgba(10,16,30,.40)' });
   for (const b of world.buttons) {
-    drawProjectedButton(ctx, b, project, b.id === drag.buttonId);
+    const player = players[b.playerId];
+    drawProjectedButton(ctx, b, project, b.id === drag.buttonId, player?.activePower);
   }
   drawProjectedGlow(ctx, world.buttons, project);
   drawKeyboardSelectionGlow(ctx, world.buttons, project);
+  drawKeyboardAimPreview(ctx, project);
   drawProjectedEntity(ctx, world.ball, project, { fill: '#f5f5f5', outline: 'rgba(10,16,30,.35)', spin: true });
 
   for (const i of world.effects.impacts) {
@@ -969,9 +1660,54 @@ function drawProjectedEntity(ctx2d, entity, project, opts = {}) {
   }
 }
 
-function drawProjectedButton(ctx2d, button, project, selected) {
+function drawProjectedButton(ctx2d, button, project, selected, activePower) {
   const p = project(button.x, button.y);
   const radius = button.radius * p.scale;
+
+  // Brilho de poder ativo
+  if (activePower) {
+    const auraMap = {
+      bomb: 'rgba(255, 80, 30, 0.3)',
+      repulsor: 'rgba(0, 255, 255, 0.22)',
+      boost: 'rgba(0, 255, 128, 0.28)',
+      dash: 'rgba(255, 140, 0, 0.28)',
+      gravity: 'rgba(122, 92, 255, 0.28)',
+      shockwave: 'rgba(0, 212, 255, 0.24)',
+      magnet: 'rgba(46, 224, 255, 0.24)',
+      freeze: 'rgba(0, 204, 255, 0.22)',
+      smoke: 'rgba(160, 160, 160, 0.2)',
+      lightning: 'rgba(255, 204, 0, 0.24)',
+    };
+    const auraColor = auraMap[activePower.type];
+    if (auraColor) {
+      ctx2d.save();
+      ctx2d.beginPath();
+      ctx2d.ellipse(p.x, p.y, radius + 6, (radius + 6) * 0.94, 0, 0, Math.PI * 2);
+      ctx2d.strokeStyle = auraColor;
+      ctx2d.lineWidth = Math.max(2, radius * 0.12);
+      ctx2d.stroke();
+      if (activePower.type === 'shockwave' || activePower.type === 'gravity') {
+        ctx2d.setLineDash([6 * p.scale, 4 * p.scale]);
+        ctx2d.beginPath();
+        ctx2d.ellipse(p.x, p.y, radius + 11, (radius + 11) * 0.94, 0, 0, Math.PI * 2);
+        ctx2d.strokeStyle = auraColor;
+        ctx2d.lineWidth = Math.max(1.5, radius * 0.08);
+        ctx2d.stroke();
+        ctx2d.setLineDash([]);
+      }
+      ctx2d.restore();
+    }
+  }
+
+  if (activePower?.type === 'bomb' || activePower?.type === 'repulsor') {
+    ctx2d.save();
+    ctx2d.beginPath();
+    ctx2d.ellipse(p.x, p.y, radius + 8, (radius + 8) * 0.93, 0, 0, Math.PI * 2);
+    ctx2d.fillStyle = activePower.type === 'bomb' ? 'rgba(255, 0, 0, 0.3)' : 'rgba(0, 255, 255, 0.2)';
+    ctx2d.fill();
+    ctx2d.restore();
+  }
+
   const [c1, c2] = button.colors;
   const grad = ctx2d.createRadialGradient(p.x - radius * 0.35, p.y - radius * 0.35, radius * 0.2, p.x, p.y, radius);
   grad.addColorStop(0, c1);
@@ -1014,6 +1750,7 @@ function drawProjectedGlow(ctx2d, buttons, project) {
 }
 
 function drawPerspectiveShotIndicator(ctx2d, button, dragState, player, project) {
+  if (player?.activePower?.type === 'smoke' && player.activePower.isDebuff) return;
   const start = project(dragState.start.x, dragState.start.y);
   const now = project(dragState.now.x, dragState.now.y);
   const buttonP = project(button.x, button.y);
@@ -1087,6 +1824,7 @@ function drawField(ctx2d, field) {
 }
 
 function drawShotIndicator(ctx2d, button, dragState, player) {
+  if (player?.activePower?.type === 'smoke' && player.activePower.isDebuff) return;
   const dx = dragState.start.x - dragState.now.x;
   const dy = dragState.start.y - dragState.now.y;
   const dist = Math.hypot(dx, dy);
@@ -1101,13 +1839,7 @@ function drawShotIndicator(ctx2d, button, dragState, player) {
   const endX = button.x + nx * baseLen;
   const endY = button.y + ny * baseLen;
 
-  ctx2d.lineWidth = 5;
-  ctx2d.lineCap = 'round';
-  ctx2d.strokeStyle = 'rgba(255,255,255,.85)';
-  ctx2d.beginPath();
-  ctx2d.moveTo(button.x, button.y);
-  ctx2d.lineTo(endX, endY);
-  ctx2d.stroke();
+  drawAimArrow(ctx2d, button.x, button.y, endX, endY, 'rgba(255,255,255,.92)', 'rgba(255,255,255,.42)', 5, 18, 22);
 
   // "indicar curva": se power curve ativo, mostra uma leve inclinação
   const hasCurve = player?.activePower?.type === 'curve';
@@ -1170,6 +1902,292 @@ function drawKeyboardSelectionGlow(ctx2d, buttons, project) {
     ctx2d.strokeStyle = selection.color;
     ctx2d.lineWidth = 3;
     ctx2d.stroke();
+  }
+}
+
+function drawKeyboardAimPreview(ctx2d, project) {
+  if (gameConfig.controlMode !== 'keyboard' || !world) return;
+
+  for (const playerId of [0, 1]) {
+    if (!keyboardChargeHeld[playerId] && keyboardCharge[playerId] <= 0) continue;
+
+    const button = getKeyboardSelection(playerId);
+    if (!button) continue;
+
+    const target = world.ball;
+    const dx = target.x - button.x;
+    const dy = target.y - button.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const maxPull = 210;
+    const pull = Math.min(maxPull, dist);
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const endX = button.x + nx * pull;
+    const endY = button.y + ny * pull;
+
+    const color = playerId === 0 ? 'rgba(60,198,255,.95)' : 'rgba(255,91,91,.95)';
+    const glow = playerId === 0 ? 'rgba(60,198,255,.35)' : 'rgba(255,91,91,.35)';
+
+    if (project) {
+      const a = project(button.x, button.y);
+      const b = project(endX, endY);
+      drawAimArrow(ctx2d, a.x, a.y, b.x, b.y, color, glow, 4.5, 16, 16);
+      continue;
+    }
+
+    drawAimArrow(ctx2d, button.x, button.y, endX, endY, color, glow, 4.5, 16, 16);
+  }
+}
+
+function drawSmokeEffect(ctx2d, playerId) {
+  const buttons = getButtonsForPlayer(playerId);
+  ctx2d.save();
+  for (const b of buttons) {
+    for (let i = 0; i < 6; i++) {
+      const offX = Math.sin(performance.now() / 200 + i) * 15;
+      const offY = Math.cos(performance.now() / 250 + i) * 15;
+      ctx2d.beginPath();
+      ctx2d.arc(b.x + offX, b.y + offY, 20, 0, Math.PI * 2);
+      ctx2d.fillStyle = 'rgba(100, 100, 100, 0.4)';
+      ctx2d.fill();
+    }
+  }
+  ctx2d.restore();
+}
+
+function drawPerspectiveSmokeEffect(ctx2d, playerId, project) {
+  const buttons = getButtonsForPlayer(playerId);
+  ctx2d.save();
+  for (const b of buttons) {
+    const p = project(b.x, b.y);
+    for (let i = 0; i < 5; i++) {
+      const offX = Math.sin(performance.now() / 200 + i) * 12 * p.scale;
+      const offY = Math.cos(performance.now() / 250 + i) * 12 * p.scale;
+      ctx2d.beginPath();
+      ctx2d.arc(p.x + offX, p.y + offY, 18 * p.scale, 0, Math.PI * 2);
+      ctx2d.fillStyle = 'rgba(80, 80, 80, 0.45)';
+      ctx2d.fill();
+    }
+  }
+  ctx2d.restore();
+}
+
+function drawPowerBar(ctx2d, button, charge) {
+  const barW = 64;
+  const barH = 8;
+  const x = button.x - barW / 2;
+  const y = button.y - button.radius - 15;
+  
+  ctx2d.fillStyle = 'rgba(0,0,0,0.58)';
+  ctx2d.fillRect(x, y, barW, barH);
+  
+  const color = charge < 0.3 ? '#37d67a' : charge < 0.7 ? '#ffd200' : '#ff3b30';
+  ctx2d.fillStyle = color;
+  ctx2d.fillRect(x, y, barW * charge, barH);
+  
+  ctx2d.strokeStyle = 'rgba(255,255,255,.92)';
+  ctx2d.lineWidth = 1.5;
+  ctx2d.strokeRect(x, y, barW, barH);
+
+  ctx2d.font = 'bold 10px Arial, sans-serif';
+  ctx2d.textAlign = 'center';
+  ctx2d.textBaseline = 'bottom';
+  ctx2d.fillStyle = 'rgba(255,255,255,.95)';
+  ctx2d.fillText(`${Math.round(charge * 100)}%`, button.x, y - 1);
+}
+
+function drawAimArrow(ctx2d, fromX, fromY, toX, toY, color, glowColor, lineWidth = 4, headLength = 16, headWidth = 14) {
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  const length = Math.hypot(dx, dy);
+  if (length < 2) return;
+
+  const angle = Math.atan2(dy, dx);
+  const tailX = fromX + Math.cos(angle) * Math.max(0, length - headLength * 0.9);
+  const tailY = fromY + Math.sin(angle) * Math.max(0, length - headLength * 0.9);
+
+  ctx2d.save();
+  ctx2d.lineCap = 'round';
+  ctx2d.lineJoin = 'round';
+  ctx2d.setLineDash([10, 6]);
+  ctx2d.strokeStyle = glowColor;
+  ctx2d.lineWidth = lineWidth + 3;
+  ctx2d.beginPath();
+  ctx2d.moveTo(fromX, fromY);
+  ctx2d.lineTo(toX, toY);
+  ctx2d.stroke();
+
+  ctx2d.setLineDash([]);
+  ctx2d.strokeStyle = color;
+  ctx2d.lineWidth = lineWidth;
+  ctx2d.beginPath();
+  ctx2d.moveTo(fromX, fromY);
+  ctx2d.lineTo(tailX, tailY);
+  ctx2d.stroke();
+
+  ctx2d.fillStyle = color;
+  ctx2d.beginPath();
+  ctx2d.moveTo(toX, toY);
+  ctx2d.lineTo(toX - Math.cos(angle - Math.PI / 8) * headLength, toY - Math.sin(angle - Math.PI / 8) * headLength);
+  ctx2d.lineTo(toX - Math.cos(angle + Math.PI / 8) * headLength, toY - Math.sin(angle + Math.PI / 8) * headLength);
+  ctx2d.closePath();
+  ctx2d.fill();
+  ctx2d.restore();
+}
+
+function drawGoalCelebrationOverlay() {
+  const celebration = world?.effects?.goalCelebration;
+  if (!celebration) return;
+
+  const elapsed = performance.now() - celebration.startAt;
+  const progress = clamp(elapsed / celebration.duration, 0, 1);
+  if (progress >= 1) {
+    world.effects.goalCelebration = null;
+    return;
+  }
+  const easeOut = 1 - Math.pow(1 - progress, 3);
+  const flash = 1 - progress;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.save();
+
+  ctx.globalAlpha = 0.34 * flash;
+  ctx.fillStyle = celebration.scorerIndex === 0 ? 'rgba(46,108,255,.9)' : 'rgba(255,59,48,.9)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const centerX = canvas.width * 0.5;
+  const centerY = canvas.height * 0.24;
+  const scale = 0.82 + easeOut * 0.44;
+
+  ctx.translate(centerX, centerY);
+  ctx.scale(scale, scale);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  ctx.shadowBlur = 26;
+  ctx.shadowColor = celebration.color;
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = celebration.color;
+  ctx.lineWidth = 8;
+  ctx.font = '900 76px Impact, Arial Black, sans-serif';
+  ctx.strokeText('GOL!', 0, 0);
+  ctx.fillText('GOL!', 0, 0);
+
+  ctx.shadowBlur = 0;
+  ctx.font = '900 28px Arial, sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.96)';
+  const scorerName = (players?.[celebration.scorerIndex]?.name) ?? 'Jogador';
+  ctx.fillText(`${scorerName} marcou`, 0, 58);
+
+  ctx.font = '800 24px Arial, sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.92)';
+  const scoreText = celebration?.scoreText ?? `${match.score[0]} - ${match.score[1]}`;
+  ctx.fillText(`Placar ${scoreText}`, 0, 95);
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = flash;
+  for (let i = 0; i < 30; i++) {
+    const angle = (i / 30) * Math.PI * 2 + progress * 5;
+    const distance = 40 + progress * 220 + (i % 5) * 10;
+    const x = canvas.width * 0.5 + Math.cos(angle) * distance;
+    const y = canvas.height * 0.35 + Math.sin(angle) * distance * 0.65;
+    ctx.beginPath();
+    ctx.arc(x, y, 3 + (i % 3), 0, Math.PI * 2);
+    ctx.fillStyle = i % 2 === 0 ? celebration.color : '#ffffff';
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Continue button
+  ctx.save();
+  ctx.globalAlpha = 0.88 * flash;
+  ctx.fillStyle = 'rgba(10,16,30,.82)';
+  const btnW = canvas.width * 0.28;
+  const btnH = 54;
+  const btnX = canvas.width * 0.36;
+  const btnY = canvas.height * 0.68;
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(btnX, btnY, btnW, btnH, 18);
+  } else {
+    ctx.rect(btnX, btnY, btnW, btnH);
+  }
+  ctx.fill();
+  ctx.strokeStyle = celebration.color;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 22px Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Continuar', canvas.width * 0.5, btnY + btnH / 2);
+  ctx.restore();
+  
+  // Store hitbox for click detection
+  continueButtonHitbox = { x: btnX, y: btnY, w: btnW, h: btnH, visible: flash > 0.3 };
+}
+
+function createExplosion(ex, ey, radius, force) {
+  if (!world) return;
+  
+  // Afeta a bola
+  const dball = Math.hypot(world.ball.x - ex, world.ball.y - ey);
+  if (dball < radius) {
+    const angle = Math.atan2(world.ball.y - ey, world.ball.x - ex);
+    const push = (1 - dball / radius) * force;
+    world.ball.vx += Math.cos(angle) * push * world.ball.invMass;
+    world.ball.vy += Math.sin(angle) * push * world.ball.invMass;
+  }
+  
+  // Afeta botões
+  for (const b of world.buttons) {
+    const d = Math.hypot(b.x - ex, b.y - ey);
+    if (d < radius && d > 1) {
+      const angle = Math.atan2(b.y - ey, b.x - ex);
+      const push = (1 - d / radius) * force;
+      b.vx += Math.cos(angle) * push * b.invMass;
+      b.vy += Math.sin(angle) * push * b.invMass;
+    }
+  }
+  
+  // Efeito visual
+  world.effects.impacts.push({
+    x: ex, y: ey,
+    strength: 1.0,
+    radius: radius * 0.8,
+    life: 0.5,
+    maxLife: 0.5,
+    color: 'rgba(255, 100, 0, 0.7)'
+  });
+  camera.shake = Math.max(15, camera.shake + 12);
+}
+
+function applyRepulsion(source, radius, force) {
+  if (!world) return;
+  const dball = Math.hypot(world.ball.x - source.x, world.ball.y - source.y);
+  if (dball < radius) {
+    const angle = Math.atan2(world.ball.y - source.y, world.ball.x - source.x);
+    world.ball.vx += Math.cos(angle) * force;
+    world.ball.vy += Math.sin(angle) * force;
+  }
+  for (const b of world.buttons) {
+    if (b.id === source.id) continue;
+    const d = Math.hypot(b.x - source.x, b.y - source.y);
+    if (d < radius) {
+      const angle = Math.atan2(b.y - source.y, b.x - source.x);
+      b.vx += Math.cos(angle) * force;
+      b.vy += Math.sin(angle) * force;
+    }
+  }
+}
+
+function applyAttraction(source, target, radius, force) {
+  const d = Math.hypot(target.x - source.x, target.y - source.y);
+  if (d < radius && d > 5) {
+    const angle = Math.atan2(source.y - target.y, source.x - target.x);
+    target.vx += Math.cos(angle) * force;
+    target.vy += Math.sin(angle) * force;
   }
 }
 

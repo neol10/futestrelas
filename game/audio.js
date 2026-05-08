@@ -65,9 +65,43 @@ export class GameAudio {
     this.tone({ frequency: 220 + s * 240, duration: 0.05 + s * 0.03, type: 'square', gain: 0.06 + s * 0.08, sweepTo: 110 });
   }
 
-  kick(power = 0.5) {
+  kick(power = 0.5, type = 'shoot') {
     const s = Math.max(0.2, Math.min(1, power));
-    this.tone({ frequency: 120 + s * 140, duration: 0.08 + s * 0.05, type: 'triangle', gain: 0.08 + s * 0.1, sweepTo: 60 });
+    let frequency = 120 + s * 140;
+    let duration = 0.08 + s * 0.05;
+    let gain = 0.08 + s * 0.1;
+    let sweepTo = 60;
+    let toneType = 'triangle';
+    
+    // Vary by kick type
+    if (type === 'pass') {
+      frequency *= 0.8; // Softer tone for passes
+      duration *= 0.7;
+      gain *= 0.7;
+    } else if (type === 'shoot') {
+      frequency *= 1.2; // Sharper tone for shoots
+      duration *= 1.1;
+      gain *= 1.1;
+    }
+    
+    this.tone({ frequency, duration, type: toneType, gain, sweepTo });
+  }
+
+  applause() {
+    // Simulate crowd applause with varied noise
+    for (let i = 0; i < 4; i++) {
+      setTimeout(() => {
+        const freq = 120 + Math.random() * 200;
+        this.tone({ frequency: freq, duration: 0.2 + Math.random() * 0.1, type: 'square', gain: 0.04, sweepTo: freq * 0.7 });
+      }, i * 100);
+    }
+  }
+
+  goalVoice() {
+    // "GOL!" voice effect using frequency sweeps
+    this.tone({ frequency: 392, duration: 0.15, type: 'sine', gain: 0.1, sweepTo: 330 });
+    setTimeout(() => this.tone({ frequency: 523.25, duration: 0.2, type: 'sine', gain: 0.12, sweepTo: 440 }), 80);
+    setTimeout(() => this.tone({ frequency: 659.25, duration: 0.25, type: 'sine', gain: 0.11, sweepTo: 523 }), 160);
   }
 
   goal() {

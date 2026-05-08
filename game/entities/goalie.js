@@ -14,11 +14,19 @@ export class Goalie {
     this.y = 0;
     this.vx = 0;
     this.vy = 0;
+    this.reactionTimer = 0;
+    this.saveAnimationTimer = 0; // Animation on save
+    this.lastSaveAngle = 0;
 
     this._home = { x: 0, y: 0 };
   }
 
   update(dt, world, config) {
+    // Decrement animation timer
+    if (this.saveAnimationTimer > 0) {
+      this.saveAnimationTimer -= dt;
+    }
+    
     this.auto = !!config.goalieAuto;
     const { width: w, height: h, wall, goalWidth, goalDepth } = world.field;
 
@@ -34,14 +42,50 @@ export class Goalie {
     this.x = goalX;
 
     if (this.auto) {
-      const targetY = clamp(world.ball.y, gy0 + 18, gy1 - 18);
-      const speed = 360;
+      const ball = world.ball;
+      const ballSpeed = Math.hypot(ball.vx, ball.vy);
+      const distanceToGoal = Math.abs(goalX - ball.x);
+
+      let targetY = ball.y;
+
+      // Não reage o tempo todo; isso deixa o goleiro menos perfeito.
+      this.reactionTimer -= dt;
+      const shouldReact = this.reactionTimer <= 0;
+      if (shouldReact) {
+        this.reactionTimer = 0.05 + Math.random() * 0.1;
+
+        // IA mais humana: só tenta antecipar quando a bola realmente vem em direção ao gol
+        const isMovingTowards = (this.side === 'left' && ball.vx < -22) || (this.side === 'right' && ball.vx > 22);
+
+        if (isMovingTowards && distanceToGoal < 360 && ballSpeed > 16) {
+          const timeToReach = distanceToGoal / Math.max(1, Math.abs(ball.vx));
+          if (timeToReach > 0 && timeToReach < 1.05) {
+            targetY = ball.y + (ball.vy * timeToReach * 0.55);
+
+            if (targetY < wall) targetY = wall + Math.abs(targetY - wall);
+            if (targetY > h - wall) targetY = (h - wall) - Math.abs(targetY - (h - wall));
+          }
+        }
+
+        // Pequena imprecisão para não parecer um imã perfeito
+        targetY += (Math.random() - 0.5) * 14;
+      }
+
+      // Restringe o alvo para dentro da área do gol
+      targetY = clamp(targetY, gy0 + 18, gy1 - 18);
+      
+      // Ajuste de velocidade do goleiro: acompanha sempre, mas sem ficar perfeito demais
+      const speed = 320;
+      const tracking = clamp(1 - distanceToGoal / 460, 0.25, 1);
       const dy = targetY - this.y;
-      this.vy = clamp(dy * 8, -speed, speed);
+      
+      // Move com atraso leve e velocidade proporcional ao perigo
+      this.vy = clamp(dy * (4.8 + tracking * 3.8), -speed, speed);
       this.y += this.vy * dt;
     } else {
       this.y = h / 2;
       this.vy = 0;
+      this.reactionTimer = 0;
     }
 
     this.y = clamp(this.y, gy0 + 18, gy1 - 18);
@@ -81,5 +125,23 @@ export class Goalie {
     ctx.arc(this.x + (this.side === 'left' ? 6 : -6), this.y, 4.5, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(46,108,255,.55)';
     ctx.fill();
+    
+    // Save animation: arm swing
+    if (this.saveAnimationTimer > 0) {
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      const progress = 1 - (this.saveAnimationTimer / 0.2);
+      const armAngle = Math.sin(progress * Math.PI) * 0.6;
+      const armX = Math.cos(armAngle) * 8;
+      const armY = Math.sin(armAngle) * 8;
+      
+      ctx.strokeStyle = 'rgba(46,108,255,.8)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(armX, armY);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 }
