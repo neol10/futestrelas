@@ -30,7 +30,8 @@ export function createInitialConfig() {
     goalieAuto: true,
     gameSpeed: 1,
     soundEnabled: true,
-    aiDifficulty: 'normal', // easy | normal | hard
+    difficulty: 'medium', // easy | medium | hard
+    weatherMode: 'clear',  // clear | rain | snow | wind | storm
   };
 }
 

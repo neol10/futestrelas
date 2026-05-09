@@ -113,6 +113,7 @@ export class GameAudio {
   power(type = 'precision') {
     const map = {
       superShot: { f: 392, g: 0.08, t: 'sawtooth' },
+      powershot: { f: 880, g: 0.12, t: 'sawtooth' },
       curve: { f: 659.25, g: 0.06, t: 'triangle' },
       magnet: { f: 587.33, g: 0.06, t: 'sine' },
       slow: { f: 349.23, g: 0.06, t: 'square' },
@@ -120,5 +121,36 @@ export class GameAudio {
     };
     const s = map[type] ?? map.precision;
     this.tone({ frequency: s.f, duration: 0.09, type: s.t, gain: s.g, sweepTo: s.f * 1.4 });
+  }
+
+  // Novo: Som de fundo da torcida usando ru\u00eddo branco filtrado
+  crowd(intensity = 0.5) {
+    const ctx = this.ensure();
+    if (!ctx || !this.master) return;
+    
+    // Pequeno sopro de ru\u00eddo para simular o est\u00e1dio
+    const bufferSize = 2 * ctx.sampleRate;
+    const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+    }
+
+    const whiteNoise = ctx.createBufferSource();
+    whiteNoise.buffer = noiseBuffer;
+    
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400 + intensity * 600;
+    
+    const amp = ctx.createGain();
+    amp.gain.value = 0.01 + intensity * 0.02;
+
+    whiteNoise.connect(filter);
+    filter.connect(amp);
+    amp.connect(this.master);
+    
+    whiteNoise.start();
+    whiteNoise.stop(ctx.currentTime + 1.5);
   }
 }

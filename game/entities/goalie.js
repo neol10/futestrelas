@@ -74,13 +74,18 @@ export class Goalie {
       // Restringe o alvo para dentro da área do gol
       targetY = clamp(targetY, gy0 + 18, gy1 - 18);
       
-      // Ajuste de velocidade do goleiro: acompanha sempre, mas sem ficar perfeito demais
-      const speed = 320;
+      // Ajuste de velocidade do goleiro: acompanha sem fechar o gol o tempo todo
+      const difficulty = config.aiDifficulty || 'normal';
+      const speedMul = difficulty === 'easy' ? 0.82 : difficulty === 'hard' ? 1.08 : 1.0;
+      const speed = 240 * speedMul;
       const tracking = clamp(1 - distanceToGoal / 460, 0.25, 1);
       const dy = targetY - this.y;
       
-      // Move com atraso leve e velocidade proporcional ao perigo
-      this.vy = clamp(dy * (4.8 + tracking * 3.8), -speed, speed);
+      // Move com atraso leve e resposta mais suave para não travar a boca do gol
+      const deadZone = 4;
+      const desiredVy = Math.abs(dy) <= deadZone ? 0 : dy * (3.1 + tracking * 2.2);
+      this.vy += clamp(desiredVy - this.vy, -speed * dt * 10, speed * dt * 10);
+      this.vy = clamp(this.vy, -speed, speed);
       this.y += this.vy * dt;
     } else {
       this.y = h / 2;

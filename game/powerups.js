@@ -2,7 +2,7 @@ import { clamp, rand, randInt } from './utils.js';
 
 const POWER_TYPES = [
   // Poderes do jogador (melhoram seu desempenho)
-  'superShot', 'curve', 'magnet', 'slow', 'precision',
+  'superShot', 'powershot', 'curve', 'magnet', 'slow', 'precision',
   'shield', 'boost', 'freeze', 'teleport', 'split',
   'block', 'spinner', 'smoke', 'lightning', 'void',
   'explosion', 'bomb', 'repulsor',
@@ -12,9 +12,23 @@ const POWER_TYPES = [
   'swamp', 'zap', 'confuse'
 ];
 
+const POWER_DURATIONS = {
+  precision: 6,
+  boost: 5,
+  shield: 5,
+  block: 5,
+  teleport: 4,
+  spinner: 4,
+  smoke: 5,
+  blur: 4,
+  drain: 5,
+  confuse: 4,
+};
+
 const POWER_COLORS = {
   // Poderes de benefício próprio
   superShot: '#ff3b30',
+  powershot: '#bf00ff',
   curve: '#b86bff',
   magnet: '#2ee0ff',
   slow: '#ffd200',
@@ -154,10 +168,11 @@ export class PowerUpSystem {
 
     const targetPlayer = isDebuff ? players.find(p => p.id !== player.id) : player;
     
+    const duration = POWER_DURATIONS[type] ?? Number(config.powerDuration);
     targetPlayer.activePower = {
       type,
-      timeLeft: config.controlMode === 'keyboard' ? (isDebuff ? 5.5 : null) : Number(config.powerDuration),
-      total: config.controlMode === 'keyboard' ? (isDebuff ? 5.5 : null) : Number(config.powerDuration),
+      timeLeft: config.controlMode === 'keyboard' ? (isDebuff ? 5.5 : null) : duration,
+      total: config.controlMode === 'keyboard' ? (isDebuff ? 5.5 : null) : duration,
       usesLeft: config.controlMode === 'keyboard' ? (isDebuff ? null : 1) : null,
       isDebuff: isDebuff
     };
@@ -315,7 +330,7 @@ export class PowerUpSystem {
     }
     
     if (powerType === 'spinner') {
-      ball.spin = (Math.random() > 0.5 ? 1 : -1) * 8; 
+      ball.spin = (Math.random() > 0.5 ? 1 : -1) * 10; 
       ball.activeEffects.spinner = true;
     }
     

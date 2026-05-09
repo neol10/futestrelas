@@ -28,6 +28,21 @@ export class WorldPhysics {
   stepSingle(dt, world, config, onImpact) {
     // integra
     world.ball.integrate(dt, this.frictionBall, this.spinDamping, this.spinCurveStrength, config, this.airResistance);
+    
+    // PowerShot Homing
+    if (world.ball.isPowerShot) {
+      const targetGoalX = world.ball.vx > 0 ? this.field.width : 0;
+      const targetGoalY = this.field.height / 2;
+      const dx = targetGoalX - world.ball.x;
+      const dy = targetGoalY - world.ball.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 5) {
+        const force = 1200; // For\u00e7a de atra\u00e7\u00e3o magn\u00e9tica
+        world.ball.vx += (dx / dist) * force * dt;
+        world.ball.vy += (dy / dist) * force * dt;
+      }
+    }
+
     for (const b of world.buttons) {
       const player = world.players?.[b.playerId];
       b.integrate(dt, this.frictionButton, player?.activePower, this.airResistance);
@@ -53,11 +68,22 @@ export class WorldPhysics {
 
     // ball-goalie + button-goalie
     for (const g of world.goalies) {
-      this.resolveCircleCollision(world.ball, g, { allowSpin: true, world }, onImpact);
+      if (!this.shouldSkipGoalieCollision(world.ball, g)) {
+        this.resolveCircleCollision(world.ball, g, { allowSpin: true, world }, onImpact);
+      }
       for (const b of world.buttons) this.resolveCircleCollision(b, g, { allowSpin: false }, onImpact);
     }
 
-    // clamp final para evitar que saiam do campo por erros de precisão
+    // clamp final e Trava de Velocidade Global (IGUAL PARA TODOS)
+    const MAX_SPEED = 580;
+    for (const b of world.buttons) {
+      const s = Math.hypot(b.vx, b.vy);
+      if (s > MAX_SPEED) {
+        b.vx = (b.vx / s) * MAX_SPEED;
+        b.vy = (b.vy / s) * MAX_SPEED;
+      }
+    }
+
     world.ball.x = clamp(world.ball.x, 0, this.field.width);
     world.ball.y = clamp(world.ball.y, 0, this.field.height);
   }
@@ -110,6 +136,16 @@ export class WorldPhysics {
   }
 
   resolveCircleCollision(a, b, { allowSpin, world }, onImpact) {
+    // PowerShot: Atravessa advers\u00e1rios
+    if (a?.type === 'ball' && a.isPowerShot && b?.type === 'button') {
+      const shooterPlayerId = a.lastShooterPlayerId;
+      if (b.playerId !== shooterPlayerId) return; // Ignora se for inimigo
+    }
+    if (b?.type === 'ball' && b.isPowerShot && a?.type === 'button') {
+      const shooterPlayerId = b.lastShooterPlayerId;
+      if (a.playerId !== shooterPlayerId) return; // Ignora se for inimigo
+    }
+
     const dx = a.x - b.x;
     const dy = a.y - b.y;
     const dist = Math.hypot(dx, dy);
@@ -209,8 +245,11 @@ export class WorldPhysics {
           a.vy += ny * Math.abs(j) * a.invMass * boost;
         }
         if (type === 'teleport') {
-          a.x += nx * 125;
-          a.y += ny * 125;
+          const side = Math.random() > 0.5 ? 1 : -1;
+          const px = -ny * side;
+          const py = nx * side;
+          a.x += nx * 200 + px * 25;
+          a.y += ny * 200 + py * 25;
         }
         if (type === 'lightning') {
           const boost = 1.85;
@@ -262,5 +301,24 @@ export class WorldPhysics {
       maxLife: 0.2 + s * 0.12,
       color: `rgba(255,255,255,${0.35 + s * 0.4})`,
     };
+  }
+
+  shouldSkipGoalieCollision(ball, goalie) {
+    const { width: w, height: h, goalWidth, goalDepth } = this.field;
+    const gy0 = (h - goalWidth) / 2;
+    const gy1 = gy0 + goalWidth;
+
+    const inGoalMouth = ball.y > gy0 && ball.y < gy1;
+    if (!inGoalMouth) return false;
+
+    if (goalie.side === 'left') {
+      const nearGoalLine = ball.x - ball.radius <= goalDepth * 0.7;
+      const movingToGoal = ball.vx < -6;
+      return nearGoalLine && movingToGoal;
+    }
+
+    const nearGoalLine = ball.x + ball.radius >= w - goalDepth * 0.7;
+    const movingToGoal = ball.vx > 6;
+    return nearGoalLine && movingToGoal;
   }
 }

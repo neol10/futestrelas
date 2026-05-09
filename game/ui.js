@@ -1,18 +1,25 @@
 import { createInitialConfig } from './config.js';
 
-export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMatch }) {
+export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, onStartMatch }) {
   const els = {
     screenMenu: document.getElementById('screenMenu'),
     screenConfig: document.getElementById('screenConfig'),
     screenGame: document.getElementById('screenGame'),
 
-    p1Team: document.getElementById('p1Team'),
-    p2Team: document.getElementById('p2Team'),
+    p1TeamList: document.getElementById('p1TeamList'),
+    p2TeamList: document.getElementById('p2TeamList'),
 
     btnGoConfig: document.getElementById('btnGoConfig'),
     btnStartQuickMatch: document.getElementById('btnStartQuickMatch'),
     btnStartMatch: document.getElementById('btnStartMatch'),
     btnFullscreen: document.getElementById('btnFullscreen'),
+    btnOpenOnline: document.getElementById('btnOpenOnline'),
+    btnOnlineBack: document.getElementById('btnOnlineBack'),
+    btnCopyId: document.getElementById('btnCopyId'),
+    btnConnect: document.getElementById('btnConnect'),
+    screenOnline: document.getElementById('screenOnline'),
+    myPeerId: document.getElementById('myPeerId'),
+    remotePeerId: document.getElementById('remotePeerId'),
 
     controlMode: document.getElementById('controlMode'),
     matchTime: document.getElementById('matchTime'),
@@ -23,6 +30,8 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
     goalieAuto: document.getElementById('goalieAuto'),
     soundEnabled: document.getElementById('soundEnabled'),
     gameSpeed: document.getElementById('gameSpeed'),
+    difficulty: document.getElementById('difficulty'),
+    weatherMode: document.getElementById('weatherMode'),
 
     powerSpawnIntervalValue: document.getElementById('powerSpawnIntervalValue'),
     powerDurationValue: document.getElementById('powerDurationValue'),
@@ -33,56 +42,67 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
 
     hudScore: document.getElementById('hudScore'),
     hudTime: document.getElementById('hudTime'),
+    scoreValue: document.getElementById('scoreValue'),
     hudTurn: document.getElementById('hudTurn'),
-    hudPower: document.getElementById('hudPower'),
-    hudStatus: document.getElementById('hudStatus'),
-    hudP1Power: document.getElementById('hudP1Power'),
-    hudP2Power: document.getElementById('hudP2Power'),
-    hudConfig: document.getElementById('hudConfig'),
+    p1Label: document.getElementById('p1Label'),
+    p2Label: document.getElementById('p2Label'),
 
     popStack: document.getElementById('popStack'),
     toast: document.getElementById('toast'),
   };
 
+  let selectedP1 = teams[0];
+  let selectedP2 = teams[1];
+
   function fillTeams() {
-    const opts = teams.map((t) => `<option value="${t}">${t}</option>`).join('');
-    els.p1Team.innerHTML = opts;
-    els.p2Team.innerHTML = opts;
+    renderTeamList(els.p1TeamList, 1);
+    renderTeamList(els.p2TeamList, 2);
   }
 
-  // Prevent choosing the same team for both players by auto-adjusting the other select
-  function guardTeamSelection() {
-    try {
-      els.p1Team.addEventListener('change', () => {
-        if (els.p1Team.value === els.p2Team.value) {
-          // pick next available option for p2
-          const options = Array.from(els.p2Team.options).map(o => o.value);
-          const alt = options.find(v => v !== els.p1Team.value) ?? options[0];
-          els.p2Team.value = alt;
-          toast('Seleções iguais não são permitidas, ajustado jogador 2', 800);
-        }
-      });
-      els.p2Team.addEventListener('change', () => {
-        if (els.p1Team.value === els.p2Team.value) {
-          const options = Array.from(els.p1Team.options).map(o => o.value);
-          const alt = options.find(v => v !== els.p2Team.value) ?? options[0];
-          els.p1Team.value = alt;
-          toast('Seleções iguais não são permitidas, ajustado jogador 1', 800);
-        }
-      });
-    } catch (err) {
-      // defensive: if elements are missing or runtime errors occur, log and continue
-      console.warn('guardTeamSelection failed', err);
+  function renderTeamList(container, playerNum) {
+    if (!container) return;
+    container.innerHTML = '';
+    teams.forEach((team) => {
+      const flag = flags[team] || '\ud83c\udff3\ufe0f';
+      const card = document.createElement('div');
+      card.className = `teamCard ${ (playerNum === 1 ? selectedP1 : selectedP2) === team ? 'selected' : '' }`;
+      card.innerHTML = `
+        <div class="teamCard-inner">
+          <span class="flag">${flag}</span>
+          <span class="name">${team}</span>
+        </div>
+        <div class="selection-indicator"></div>
+      `;
+      card.onclick = () => selectTeam(playerNum, team);
+      container.appendChild(card);
+    });
+  }
+
+  function selectTeam(playerNum, team) {
+    if (playerNum === 1) {
+      if (team === selectedP2) {
+        toast('Este time já foi escolhido pelo Jogador 2', 800);
+        return;
+      }
+      selectedP1 = team;
+    } else {
+      if (team === selectedP1) {
+        toast('Este time já foi escolhido pelo Jogador 1', 800);
+        return;
+      }
+      selectedP2 = team;
     }
+    fillTeams();
   }
 
   function showScreen(name) {
     els.screenMenu.hidden = name !== 'menu';
     els.screenConfig.hidden = name !== 'config';
     els.screenGame.hidden = name !== 'game';
+    els.screenOnline.hidden = name !== 'online';
 
     if (name === 'menu') setTopButtons({ back: false, restart: false });
-    if (name === 'config') setTopButtons({ back: true, restart: false });
+    if (name === 'config' || name === 'online') setTopButtons({ back: true, restart: false });
   }
 
   function setTopButtons({ back, restart }) {
@@ -92,16 +112,15 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
 
   function getSelections() {
     return {
-      p1Team: els.p1Team.value,
-      p2Team: els.p2Team.value,
+      p1Team: selectedP1,
+      p2Team: selectedP2,
     };
   }
 
   function getConfigFromForm() {
-    const matchTime = els.matchTime.value;
     return {
       controlMode: els.controlMode.value,
-      matchTime,
+      matchTime: els.matchTime.value,
       maxGoals: els.maxGoals.value,
       powerUpsEnabled: !!els.powerUpsEnabled.checked,
       powerSpawnInterval: Number(els.powerSpawnInterval.value),
@@ -109,12 +128,15 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
       goalieAuto: !!els.goalieAuto.checked,
       soundEnabled: !!els.soundEnabled.checked,
       gameSpeed: Number(els.gameSpeed.value),
+      difficulty: els.difficulty?.value ?? 'medium',
+      weatherMode: els.weatherMode?.value ?? 'clear',
     };
   }
 
   function setTeams(sel) {
-    els.p1Team.value = sel.p1Team;
-    els.p2Team.value = sel.p2Team;
+    selectedP1 = sel.p1Team;
+    selectedP2 = sel.p2Team;
+    fillTeams();
   }
 
   function setConfig(cfg) {
@@ -128,6 +150,7 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
     els.goalieAuto.checked = !!config.goalieAuto;
     els.soundEnabled.checked = !!config.soundEnabled;
     els.gameSpeed.value = String(config.gameSpeed);
+    if (els.weatherMode && config.weatherMode) els.weatherMode.value = String(config.weatherMode);
 
     syncRanges();
   }
@@ -157,51 +180,44 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
     }, Math.max(500, ttl) + 260);
   }
 
-  function syncHUD({ players, currentPlayerIndex, match, config, state, canShoot, controlMode, keyboardSelectionText, goldenGoalMode, shotCount, maxShots }) {
-    els.hudScore.textContent = `${match.score[0]} - ${match.score[1]}`;
+  function syncHUD({ players, currentPlayerIndex, match, config, state, keyboardSelectionText }) {
+    if (!els.hudScore) return;
 
-    if (match.infinite || match.timeLeft === Infinity) {
-      els.hudTime.textContent = '∞';
-    } else {
-      els.hudTime.textContent = `${Math.ceil(match.timeLeft)}s`;
+    // Placar e Tempo
+    if (els.hudScore) els.hudScore.textContent = `${match.score[0]} - ${match.score[1]}`;
+    if (els.hudTime) {
+      const t = Math.ceil(match.timeLeft);
+      if (t > 90) {
+        const m = Math.floor(t / 60), s = t % 60;
+        els.hudTime.textContent = `${m}:${String(s).padStart(2,'0')}`;
+      } else {
+        els.hudTime.textContent = t;
+      }
+    }
+    
+    // Nomes dos Times
+    if (els.p1Label) els.p1Label.textContent = players[0].team;
+    if (els.p2Label) els.p2Label.textContent = players[1].team;
+
+    // Turno e Status
+    let turnText = '';
+    if (state === 'goalCelebration') {
+      turnText = 'GOL!!!';
+    } else if (state === 'playing') {
+      const p = players[currentPlayerIndex];
+      turnText = `VEZ: ${p.team}`;
+      if (config.controlMode === 'keyboard' && keyboardSelectionText) {
+        turnText += ` (${keyboardSelectionText})`;
+      }
     }
 
-    const p = players[currentPlayerIndex];
-    els.hudTurn.textContent = controlMode === 'keyboard'
-      ? `${p.name} (${p.team}) - ${keyboardSelectionText || ''}`
-      : `${p.name} (${p.team})`;
-
-    els.hudPower.textContent = formatPowerLabel(p, config.controlMode);
-    els.hudP1Power.textContent = formatPowerLabel(players[0], config.controlMode);
-    els.hudP2Power.textContent = formatPowerLabel(players[1], config.controlMode);
-
-    let shotsLeftText;
-    let maxShotsText;
-    if (!isFinite(maxShots)) {
-      shotsLeftText = '∞';
-      maxShotsText = '∞';
-    } else {
-      shotsLeftText = Math.max(0, maxShots - shotCount);
-      maxShotsText = maxShots;
+    if (els.hudTurn) {
+      els.hudTurn.hidden = true;
     }
-    const shotText = `• Chutes: ${shotsLeftText}/${maxShotsText}`;
-
-    if (state === 'finished') {
-      els.hudStatus.textContent = 'partida encerrada';
-    } else if (goldenGoalMode) {
-      els.hudStatus.textContent = 'gol de ouro: primeiro gol vence ' + shotText;
-    } else if (controlMode === 'keyboard') {
-      els.hudStatus.textContent = (canShoot ? 'modo teclado ativo ' : 'botões em movimento ') + shotText;
-    } else if (state === 'goalPause') {
-      els.hudStatus.textContent = 'gol! reposicionando...';
-    } else {
-      els.hudStatus.textContent = (canShoot ? 'pronto para jogar ' : 'aguardando as peças pararem ') + shotText;
-    }
-
-    els.hudConfig.textContent = `modo=${config.controlMode === 'keyboard' ? 'teclado' : 'arrastar'} • tempo=${config.matchTime === 'infinite' ? '∞' : config.matchTime + 's'} • gols=${config.maxGoals} • powerups=${config.powerUpsEnabled ? 'on' : 'off'} • som=${config.soundEnabled ? 'on' : 'off'} • goleiro=${config.goalieAuto ? 'auto' : 'parado'} • speed=${Number(config.gameSpeed).toFixed(2)}x`;
   }
 
   function formatPowerLabel(player, controlMode) {
+    if (!player) { console.warn('formatPowerLabel: jogador inválido'); return ''; }
     let label = '';
     if (player.storedPower) {
       label = `[${player.storedPower}] `;
@@ -211,7 +227,6 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
     if (!power) return label || 'nenhum';
     
     if (controlMode === 'keyboard') {
-      const usesLeft = typeof power.usesLeft === 'number' ? power.usesLeft : 1;
       return label + `${power.type} (ativo)`;
     }
     const timeLeft = typeof power.timeLeft === 'number' ? Math.ceil(power.timeLeft) : 0;
@@ -224,11 +239,13 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
   });
 
   els.btnStartQuickMatch.addEventListener('click', () => {
-    onStartMatch();
+    document.dispatchEvent(new CustomEvent('online:stop'));
+    onStartMatch(null, getSelections());
     showScreen('game');
   });
 
   els.btnBack.addEventListener('click', () => {
+    document.dispatchEvent(new CustomEvent('online:stop'));
     onBackToMenu?.();
   });
 
@@ -247,15 +264,41 @@ export function createUI({ teams, onGoConfig, onBackToMenu, onRestart, onStartMa
   els.btnStartMatch.addEventListener('click', () => {
     const config = getConfigFromForm();
     const selections = getSelections();
-    if (selections.p1Team === selections.p2Team) {
-      toast('Escolha seleções diferentes', 900);
-      return;
-    }
+    document.dispatchEvent(new CustomEvent('online:stop'));
     onStartMatch?.(config, selections);
   });
 
+  // ONLINE ACTIONS
+  els.btnOpenOnline.addEventListener('click', () => {
+    showScreen('online');
+    document.dispatchEvent(new CustomEvent('online:init'));
+  });
+
+  els.btnOnlineBack.addEventListener('click', () => {
+    document.dispatchEvent(new CustomEvent('online:stop'));
+    showScreen('menu');
+  });
+
+  els.btnCopyId.addEventListener('click', () => {
+    const id = els.myPeerId.textContent;
+    navigator.clipboard.writeText(id);
+    toast('ID Copiado!', 1200);
+  });
+
+  els.btnConnect.addEventListener('click', () => {
+    const remoteId = els.remotePeerId.value.trim();
+    if (!remoteId) return toast('Insira o ID do amigo', 1500);
+    els.btnConnect.textContent = 'Conectando...';
+    els.btnConnect.disabled = true;
+    document.dispatchEvent(new CustomEvent('online:connect', { detail: { remoteId } }));
+    // Restaura botão após 8s caso falhe
+    setTimeout(() => {
+      els.btnConnect.textContent = 'Conectar';
+      els.btnConnect.disabled = false;
+    }, 8000);
+  });
+
   fillTeams();
-  guardTeamSelection();
   syncRanges();
 
   return {

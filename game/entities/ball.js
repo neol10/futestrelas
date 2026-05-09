@@ -24,6 +24,9 @@ export class Ball {
     this.trail = [];
     this.trailTimer = 0;
 
+    this.isPowerShot = false;
+    this.lastShooterPlayerId = null;
+
     this._home = { x, y };
   }
 
@@ -101,44 +104,68 @@ export class Ball {
     this.frozenTime = 0;
     this.activeEffects = {};
     this.trail = [];
+    this.isPowerShot = false;
+    this.lastShooterPlayerId = null;
   }
 
   render(ctx) {
-    // trail
-    if (this.trail.length > 0) {
-      ctx.beginPath();
-      ctx.moveTo(this.trail[0].x, this.trail[0].y);
-      for (let i = 1; i < this.trail.length; i++) {
-        ctx.lineTo(this.trail[i].x, this.trail[i].y);
+    // Trail (Rastro neon/dinâmico de alta velocidade)
+    if (this.trail.length > 1) {
+      ctx.save();
+      for (let i = 0; i < this.trail.length - 1; i++) {
+        const t1 = this.trail[i];
+        const t2 = this.trail[i + 1];
+        const alpha = t1.life * 0.6;
+        
+        ctx.beginPath();
+        ctx.moveTo(t1.x, t1.y);
+        ctx.lineTo(t2.x, t2.y);
+        
+        // Efeito de fogo/energia
+        const speed = Math.hypot(this.vx, this.vy);
+        let trailColor = speed > 600 ? 'rgba(255, 215, 0, ' : 'rgba(255, 255, 255, ';
+        if (this.isPowerShot) trailColor = 'rgba(191, 0, 255, '; // Roxo para PowerShot
+        
+        ctx.strokeStyle = trailColor + alpha + ')';
+        ctx.lineWidth = this.radius * (this.isPowerShot ? 2.5 : 1.6) * t1.life;
+        ctx.lineCap = 'round';
+        ctx.shadowBlur = this.isPowerShot ? 25 : (speed > 600 ? 15 : 0);
+        ctx.shadowColor = this.isPowerShot ? '#bf00ff' : '#ffd700';
+        ctx.stroke();
       }
-      ctx.lineTo(this.x, this.y);
-      ctx.strokeStyle = 'rgba(245, 245, 245, 0.25)';
-      ctx.lineWidth = this.radius * 1.6;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.stroke();
+      ctx.restore();
     }
 
-    // Enhanced 3D shadow
-    ctx.globalAlpha = 0.32;
+    // Dynamic 3D shadow (Moves with velocity)
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    const shadowOffX = this.vx * 0.012;
+    const shadowOffY = this.vy * 0.012 + (this.radius * 0.35);
     ctx.beginPath();
-    ctx.ellipse(this.x + this.radius * 0.15, this.y + this.radius * 0.45, this.radius * 1.2, this.radius * 0.85, 0, 0, Math.PI * 2);
+    ctx.ellipse(this.x + shadowOffX, this.y + shadowOffY, this.radius * 1.1, this.radius * 0.7, 0, 0, Math.PI * 2);
     ctx.fillStyle = '#000000';
     ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.restore();
 
-    // 3D ball with radial gradient
+    // 3D ball with radial gradient (Better contrast)
     const grad = ctx.createRadialGradient(
-      this.x - this.radius * 0.3, this.y - this.radius * 0.3, this.radius * 0.1,
+      this.x - this.radius * 0.4, this.y - this.radius * 0.4, this.radius * 0.1,
       this.x, this.y, this.radius
     );
     grad.addColorStop(0, '#ffffff');
-    grad.addColorStop(0.6, '#f5f5f5');
-    grad.addColorStop(1, '#d0d0d0');
+    grad.addColorStop(0.3, '#f9f9f9');
+    grad.addColorStop(0.7, '#cccccc');
+    grad.addColorStop(1, '#999999');
     
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Adicional: Brilho de reflexão na base (Ambience)
+    ctx.beginPath();
+    ctx.arc(this.x + this.radius * 0.3, this.y + this.radius * 0.3, this.radius * 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
     ctx.fill();
 
     // Outer rim for depth
