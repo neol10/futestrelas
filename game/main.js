@@ -829,6 +829,101 @@ window.addEventListener('online:error', (e) => {
   ui.toast('❌ ' + msg, 3000);
 });
 
+// MOBILE CONTROLS LOGIC
+function setupMobileControls() {
+  const zone = document.getElementById('joystickZone');
+  const stick = document.getElementById('joystickStick');
+  const btnPower = document.getElementById('btnMobilePower');
+  const btnSwitch = document.getElementById('btnMobileSwitch');
+  const btnDash = document.getElementById('btnMobileDash');
+  const btnPass = document.getElementById('btnMobilePass');
+  const btnKick = document.getElementById('btnMobileKick');
+
+  if (!zone || !stick) return;
+
+  let dragging = false;
+  let startX, startY;
+  const maxRadius = 40;
+
+  const updateJoystick = (px, py) => {
+    let dx = px - startX;
+    let dy = py - startY;
+    const dist = Math.hypot(dx, dy);
+    
+    if (dist > maxRadius) {
+      dx = (dx / dist) * maxRadius;
+      dy = (dy / dist) * maxRadius;
+    }
+
+    stick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+
+    // Map to WASD
+    keyboardInput.keysDown.delete('KeyW');
+    keyboardInput.keysDown.delete('KeyS');
+    keyboardInput.keysDown.delete('KeyA');
+    keyboardInput.keysDown.delete('KeyD');
+
+    if (dist > 10) {
+      if (dy < -15) keyboardInput.keysDown.add('KeyW');
+      if (dy > 15) keyboardInput.keysDown.add('KeyS');
+      if (dx < -15) keyboardInput.keysDown.add('KeyA');
+      if (dx > 15) keyboardInput.keysDown.add('KeyD');
+    }
+  };
+
+  zone.addEventListener('touchstart', (e) => {
+    dragging = true;
+    const touch = e.touches[0];
+    const rect = zone.getBoundingClientRect();
+    startX = rect.left + rect.width / 2;
+    startY = rect.top + rect.height / 2;
+    updateJoystick(touch.clientX, touch.clientY);
+  });
+
+  window.addEventListener('touchmove', (e) => {
+    if (!dragging) return;
+    const touch = e.touches[0];
+    updateJoystick(touch.clientX, touch.clientY);
+  }, { passive: false });
+
+  window.addEventListener('touchend', () => {
+    if (!dragging) return;
+    dragging = false;
+    stick.style.transform = 'translate(-50%, -50%)';
+    keyboardInput.keysDown.delete('KeyW');
+    keyboardInput.keysDown.delete('KeyS');
+    keyboardInput.keysDown.delete('KeyA');
+    keyboardInput.keysDown.delete('KeyD');
+  });
+
+  // Action Buttons
+  btnPower?.addEventListener('touchstart', (e) => { e.preventDefault(); useKeyboardPower(0); });
+  btnSwitch?.addEventListener('touchstart', (e) => { e.preventDefault(); cycleKeyboardSelection(0); });
+  btnDash?.addEventListener('touchstart', (e) => { e.preventDefault(); performDash(0); });
+  
+  btnPass?.addEventListener('touchstart', (e) => { 
+    e.preventDefault(); 
+    keyboardPassHeld[0] = true;
+    const b = getKeyboardSelection(0);
+    if (b) performKeyboardPass(0, b);
+    setTimeout(() => keyboardPassHeld[0] = false, 150);
+  });
+
+  btnKick?.addEventListener('touchstart', (e) => { 
+    e.preventDefault(); 
+    keyboardChargeHeld[0] = true; 
+  });
+  btnKick?.addEventListener('touchend', (e) => { 
+    e.preventDefault(); 
+    keyboardChargeHeld[0] = false;
+    const b = getKeyboardSelection(0);
+    if (b) maybeReleaseKeyboardKick(0, b);
+  });
+}
+
+// Inicia controles móveis
+setupMobileControls();
+
 function handleOnlineData(data) {
   if (!data || typeof data !== 'object') return;
 
