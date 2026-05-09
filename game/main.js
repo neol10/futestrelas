@@ -936,8 +936,6 @@ function update(dt) {
         startGoldenGoal();
       }
     }
-    
-    weather.update(dt, gameConfig.weatherMode ?? 'clear');
 
     powerUps.update(dt, world, players, currentPlayerIndex, gameConfig, {
       onCollect: (type, player) => {
