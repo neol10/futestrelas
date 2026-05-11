@@ -1328,8 +1328,20 @@ function updateCamera(dt) {
   // CLAMPING
   const viewWidth = (canvas.width / camera.zoom) / 2;
   const viewHeight = (canvas.height / camera.zoom) / 2;
-  camera.x = Math.max(viewWidth - 10, Math.min(FIELD.width - viewWidth + 10, camera.x));
-  camera.y = Math.max(viewHeight - 10, Math.min(FIELD.height - viewHeight + 10, camera.y));
+
+  // Se a largura da visão for maior que o campo, centraliza em X
+  if (viewWidth * 2 >= FIELD.width + 20) {
+    camera.x = FIELD.width / 2;
+  } else {
+    camera.x = Math.max(viewWidth - 10, Math.min(FIELD.width - viewWidth + 10, camera.x));
+  }
+
+  // Se a altura da visão for maior que o campo, centraliza em Y
+  if (viewHeight * 2 >= FIELD.height + 20) {
+    camera.y = FIELD.height / 2;
+  } else {
+    camera.y = Math.max(viewHeight - 10, Math.min(FIELD.height - viewHeight + 10, camera.y));
+  }
 }
 
 function updateKeyboardControls(dt) {
