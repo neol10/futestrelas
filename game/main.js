@@ -537,26 +537,24 @@ function resizeCanvasToCSS() {
 }
 
 function toWorldCoords(clientX, clientY) {
-  // Converte coordenadas do mouse (CSS px) para coordenadas do mundo do jogo
-  // usando o inverso exato da transformação da câmera aplicada em renderTopDown
+  // Usa o MESMO cálculo de renderTopDown para garantir coerência
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   
-  // CSS pixels relativos ao canvas
-  const cssX = clientX - rect.left;
-  const cssY = clientY - rect.top;
+  // Converte de CSS px para canvas px (físicos)
+  const canvasX = (clientX - rect.left) * dpr;
+  const canvasY = (clientY - rect.top) * dpr;
   
-  // A escala usada em renderTopDown (em CSS pixels, sem DPR)
-  const refScale = rect.height / 520;
-  const finalScale = refScale * camera.zoom;
+  // Mesma escala base de renderTopDown
+  const baseScale = Math.min(canvas.width / FIELD.width, canvas.height / FIELD.height);
+  const finalScale = baseScale * camera.zoom;
   
-  // Offset do viewport (em CSS pixels)
-  const viewportX = rect.width / 2 - camera.x * finalScale;
-  const viewportY = rect.height / 2 - camera.y * finalScale;
+  const viewportX = (canvas.width / 2) - camera.x * finalScale;
+  const viewportY = (canvas.height / 2) - camera.y * finalScale;
   
-  // Inverte a transformação
-  const worldX = (cssX - viewportX) / finalScale;
-  const worldY = (cssY - viewportY) / finalScale;
+  // Inverso do transform
+  const worldX = (canvasX - viewportX) / finalScale;
+  const worldY = (canvasY - viewportY) / finalScale;
   
   return { x: worldX, y: worldY };
 }
@@ -1305,14 +1303,11 @@ function update(dt) {
 function updateCamera(dt) {
   if (!world || state === 'menu' || state === 'config') return;
 
-  // Escala de referência baseada em CSS pixels (sem DPR) para consistência
-  const dpr = window.devicePixelRatio || 1;
-  const cssHeight = canvas.height / dpr;
-  const cssWidth = canvas.width / dpr;
-  const refScale = cssHeight / 520;
+  // Escala base: a mesma usada em renderTopDown
+  const baseScale = Math.min(canvas.width / FIELD.width, canvas.height / FIELD.height);
   
   let targetX, targetY;
-  let targetZoom = 1.6; // Zoom base agressivo
+  let targetZoom = 1.6; // Zoom base estilo Mamoball (1.0 = campo todo; 1.6 = mais focado)
 
   // 1. CÂMERA DE COMEMORAÇÃO
   if ((state === 'goalPause' || state === 'finished') && world.effects.goalCelebration) {
@@ -1328,9 +1323,8 @@ function updateCamera(dt) {
     }
   } else {
     // 2. LÓGICA NORMAL (Mamoball Style)
-    // Câmera segue a bola com look-ahead baseado na velocidade
-    const lookAheadX = world.ball.vx * 0.48;
-    const lookAheadY = world.ball.vy * 0.48;
+    const lookAheadX = world.ball.vx * 0.45;
+    const lookAheadY = world.ball.vy * 0.45;
     targetX = world.ball.x + lookAheadX;
     targetY = world.ball.y + lookAheadY;
 
@@ -1340,11 +1334,10 @@ function updateCamera(dt) {
     }
 
     const ballSpeed = Math.hypot(world.ball.vx, world.ball.vy);
-    // Zoom dinâmico: abre um pouco em alta velocidade, fecha no gol
     if (ballSpeed > 550) {
-      targetZoom = 1.25;
+      targetZoom = 1.3; // Abre um pouco quando bola é rápida
     } else if (world.ball.x < 120 || world.ball.x > FIELD.width - 120) {
-      targetZoom = 1.85;
+      targetZoom = 1.85; // Fecha nos gols
     }
   }
 
@@ -1356,27 +1349,24 @@ function updateCamera(dt) {
   const zoomSpeed = 2.5;
   camera.zoom += (targetZoom - camera.zoom) * zoomSpeed * dt;
 
-  // CLAMPING INTELIGENTE (em CSS pixels)
-  const finalScale = refScale * camera.zoom;
-  const vWidth = (cssWidth / finalScale) / 2;
-  const vHeight = (cssHeight / finalScale) / 2;
+  // CLAMPING — usando a mesma escala de renderTopDown
+  const finalScale = baseScale * camera.zoom;
+  const vHalfW = (canvas.width / finalScale) / 2;
+  const vHalfH = (canvas.height / finalScale) / 2;
 
-  // Permitimos que a câmera saia um pouco do campo para mostrar os gols/torcida
-  const marginX = 60; 
+  const marginX = 60;
   const marginY = 40;
 
-  // Clamping X
-  if (vWidth * 2 >= FIELD.width + marginX * 2) {
+  if (vHalfW * 2 >= FIELD.width + marginX * 2) {
     camera.x = FIELD.width / 2;
   } else {
-    camera.x = Math.max(vWidth - marginX, Math.min(FIELD.width - vWidth + marginX, camera.x));
+    camera.x = Math.max(vHalfW - marginX, Math.min(FIELD.width - vHalfW + marginX, camera.x));
   }
 
-  // Clamping Y
-  if (vHeight * 2 >= FIELD.height + marginY * 2) {
+  if (vHalfH * 2 >= FIELD.height + marginY * 2) {
     camera.y = FIELD.height / 2;
   } else {
-    camera.y = Math.max(vHeight - marginY, Math.min(FIELD.height - vHeight + marginY, camera.y));
+    camera.y = Math.max(vHalfH - marginY, Math.min(FIELD.height - vHalfH + marginY, camera.y));
   }
 }
 
@@ -2138,20 +2128,15 @@ function drawStadiumOverlay() {
 }
 
 function renderTopDown(ox, oy) {
-  // Escala Mamoball: usa CSS pixels (sem DPR) para consistência visual
-  // Isso garante que 520 CSS px de altura = zoom 1.0, independente do monitor
-  const dpr = window.devicePixelRatio || 1;
-  const cssHeight = canvas.height / dpr;
-  const cssWidth = canvas.width / dpr;
-  const refScale = cssHeight / 520; 
-  const finalScale = refScale * camera.zoom;
+  // ESCALA BASE: faz o campo inteiro caber no canvas (zoom=1 mostra tudo)
+  // canvas.width/height são pixels físicos (já incluem DPR via resizeCanvasToCSS)
+  const baseScale = Math.min(canvas.width / FIELD.width, canvas.height / FIELD.height);
+  const finalScale = baseScale * camera.zoom;
   
-  // Aplica DPR para o transform real no canvas
-  const realScale = finalScale * dpr;
-  const viewportX = (canvas.width / 2) - camera.x * realScale;
-  const viewportY = (canvas.height / 2) - camera.y * realScale;
+  const viewportX = (canvas.width / 2) - camera.x * finalScale;
+  const viewportY = (canvas.height / 2) - camera.y * finalScale;
 
-  ctx.setTransform(realScale, 0, 0, realScale, viewportX + ox * dpr, viewportY + oy * dpr);
+  ctx.setTransform(finalScale, 0, 0, finalScale, viewportX + ox, viewportY + oy);
 
   drawStadium(ctx); 
   drawField(ctx);
