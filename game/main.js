@@ -1326,22 +1326,10 @@ function updateCamera(dt) {
   camera.zoom += (targetZoom - camera.zoom) * zoomSpeed * dt;
 
   // CLAMPING
-  const baseScale = Math.min(canvas.width / FIELD.width, canvas.height / FIELD.height);
-  const finalScale = baseScale * camera.zoom;
-  const viewWidth = canvas.width / (2 * finalScale);
-  const viewHeight = canvas.height / (2 * finalScale);
-
-  if (FIELD.width <= viewWidth * 2) {
-    camera.x = FIELD.width / 2;
-  } else {
-    camera.x = Math.max(viewWidth - 10, Math.min(FIELD.width - viewWidth + 10, camera.x));
-  }
-
-  if (FIELD.height <= viewHeight * 2) {
-    camera.y = FIELD.height / 2;
-  } else {
-    camera.y = Math.max(viewHeight - 10, Math.min(FIELD.height - viewHeight + 10, camera.y));
-  }
+  const viewWidth = (canvas.width / camera.zoom) / 2;
+  const viewHeight = (canvas.height / camera.zoom) / 2;
+  camera.x = Math.max(viewWidth - 10, Math.min(FIELD.width - viewWidth + 10, camera.x));
+  camera.y = Math.max(viewHeight - 10, Math.min(FIELD.height - viewHeight + 10, camera.y));
 }
 
 function updateKeyboardControls(dt) {
