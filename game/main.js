@@ -649,6 +649,8 @@ canvas.addEventListener('pointercancel', () => {
   if (world) world.controlledButtonId = null;
 });
 
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
 canvas.addEventListener('click', (e) => {
   // Handle continue button in goal celebration overlay
   if (state === 'goalPause' && continueButtonHitbox && continueButtonHitbox.visible) {
@@ -691,29 +693,23 @@ window.addEventListener('keydown', (e) => {
   // Comandos de usar poder (F/P) e chute (E/O)
   if (code === 'KeyF' && state === 'playing') {
     useKeyboardPower(0);
-    return;
   }
   if (code === 'KeyP' && state === 'playing') {
     useKeyboardPower(1);
-    return;
   }
   if (code === 'KeyE' && state === 'playing') {
     keyboardChargeHeld[0] = true;
-    return;
   }
   if (code === 'KeyO' && state === 'playing') {
     keyboardChargeHeld[1] = true;
-    return;
   }
   
   // Pass actions: R for P1 (WASD), L for P2 (Arrows)
   if (code === 'KeyR' && state === 'playing') {
     keyboardPassHeld[0] = true;
-    return;
   }
   if (code === 'KeyL' && state === 'playing') {
     keyboardPassHeld[1] = true;
-    return;
   }
   
   if (code === 'ShiftLeft' || code === 'Space') {
@@ -1282,8 +1278,9 @@ function update(dt) {
 function updateCamera(dt) {
   if (!world || state === 'menu' || state === 'config') return;
 
+  const baseScale = Math.min(canvas.width / FIELD.width, canvas.height / FIELD.height);
   let targetX, targetY;
-  let targetZoom = 1.15;
+  let targetZoom = 1.4; // Zoom base mais próximo (estilo Mamoball)
 
   // 1. CÂMERA DE COMEMORAÇÃO (Foco no Artilheiro/Vencedor)
   if ((state === 'goalPause' || state === 'finished') && world.effects.goalCelebration) {
@@ -1292,15 +1289,16 @@ function updateCamera(dt) {
     if (scorer) {
       targetX = scorer.x;
       targetY = scorer.y;
-      targetZoom = 1.6; // Zoom bem próximo
+      targetZoom = 1.8;
     } else {
       targetX = world.ball.x;
       targetY = world.ball.y;
     }
   } else {
     // 2. LÓGICA NORMAL (Antecipação/Look-ahead)
-    const lookAheadX = world.ball.vx * 0.35;
-    const lookAheadY = world.ball.vy * 0.35;
+    // Aumentamos o look-ahead para a câmera "prever" a direção da bola
+    const lookAheadX = world.ball.vx * 0.45;
+    const lookAheadY = world.ball.vy * 0.45;
     targetX = world.ball.x + lookAheadX;
     targetY = world.ball.y + lookAheadY;
 
@@ -1310,37 +1308,42 @@ function updateCamera(dt) {
     }
 
     const ballSpeed = Math.hypot(world.ball.vx, world.ball.vy);
-    if (ballSpeed > 500) {
-      targetZoom = 0.85;
-    } else if (world.ball.x < 200 || world.ball.x > FIELD.width - 200) {
-      targetZoom = 1.3;
+    if (ballSpeed > 600) {
+      targetZoom = 1.1; // Abre um pouco quando a bola corre muito
+    } else if (world.ball.x < 150 || world.ball.x > FIELD.width - 150) {
+      targetZoom = 1.6; // Foca mais perto nos gols
     }
   }
 
   // INTERPOLAÇÃO (Smoothing)
-  const followSpeed = state === 'goalPause' ? 2.5 : 4.5;
+  const followSpeed = state === 'goalPause' ? 3.0 : 5.5;
   camera.x += (targetX - camera.x) * followSpeed * dt;
   camera.y += (targetY - camera.y) * followSpeed * dt;
 
-  const zoomSpeed = state === 'goalPause' ? 1.5 : 2.5;
+  const zoomSpeed = state === 'goalPause' ? 2.0 : 3.0;
   camera.zoom += (targetZoom - camera.zoom) * zoomSpeed * dt;
 
-  // CLAMPING
-  const viewWidth = (canvas.width / camera.zoom) / 2;
-  const viewHeight = (canvas.height / camera.zoom) / 2;
+  // CLAMPING CORRIGIDO
+  // Usamos o finalScale real para calcular o tamanho da tela em unidades do mundo
+  const finalScale = baseScale * camera.zoom;
+  const viewWidth = (canvas.width / finalScale) / 2;
+  const viewHeight = (canvas.height / finalScale) / 2;
 
-  // Se a largura da visão for maior que o campo, centraliza em X
-  if (viewWidth * 2 >= FIELD.width + 20) {
+  // Margem de segurança para garantir que as bordas do campo fiquem visíveis
+  const margin = 15;
+
+  // Se a largura da visão for maior que o campo total (tela muito larga), centraliza
+  if (viewWidth * 2 >= FIELD.width + margin * 2) {
     camera.x = FIELD.width / 2;
   } else {
-    camera.x = Math.max(viewWidth - 10, Math.min(FIELD.width - viewWidth + 10, camera.x));
+    camera.x = Math.max(viewWidth - margin, Math.min(FIELD.width - viewWidth + margin, camera.x));
   }
 
-  // Se a altura da visão for maior que o campo, centraliza em Y
-  if (viewHeight * 2 >= FIELD.height + 20) {
+  // Se a altura da visão for maior que o campo total (tela muito alta), centraliza
+  if (viewHeight * 2 >= FIELD.height + margin * 2) {
     camera.y = FIELD.height / 2;
   } else {
-    camera.y = Math.max(viewHeight - 10, Math.min(FIELD.height - viewHeight + 10, camera.y));
+    camera.y = Math.max(viewHeight - margin, Math.min(FIELD.height - viewHeight + margin, camera.y));
   }
 }
 
@@ -1373,16 +1376,17 @@ function updateKeyboardControls(dt) {
 
     const dx = (right - left) * mult;
     const dy = (down - up) * mult;
-    if (dx === 0 && dy === 0) continue;
+    
+    if (dx !== 0 || dy !== 0) {
+      const accel = 6500 * accelMult;
+      button.vx += dx * accel * dt;
+      button.vy += dy * accel * dt;
 
-    const accel = 6500 * accelMult; // Aumentado de 4500 para 6500 para mais agilidade
-    button.vx += dx * accel * dt;
-    button.vy += dy * accel * dt;
-
-    const maxSpeed = 850 * speedMult; // Aumentado levemente
-    const clamped = clampMagnitude(button.vx, button.vy, maxSpeed);
-    button.vx = clamped.vx;
-    button.vy = clamped.vy;
+      const maxSpeed = 850 * speedMult;
+      const clamped = clampMagnitude(button.vx, button.vy, maxSpeed);
+      button.vx = clamped.vx;
+      button.vy = clamped.vy;
+    }
 
     if (keyboardChargeHeld[control.playerId]) {
       keyboardCharge[control.playerId] = Math.min(1, keyboardCharge[control.playerId] + dt / 0.85);
