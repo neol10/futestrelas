@@ -1278,27 +1278,30 @@ function update(dt) {
 function updateCamera(dt) {
   if (!world || state === 'menu' || state === 'config') return;
 
-  const baseScale = Math.min(canvas.width / FIELD.width, canvas.height / FIELD.height);
+  // Escala de referência baseada na altura da tela para manter consistência visual
+  // em diferentes resoluções (estilo Mamoball)
+  const refScale = canvas.height / 520; 
+  
   let targetX, targetY;
-  let targetZoom = 1.4; // Zoom base mais próximo (estilo Mamoball)
+  let targetZoom = 1.6; // Zoom base agressivo
 
-  // 1. CÂMERA DE COMEMORAÇÃO (Foco no Artilheiro/Vencedor)
+  // 1. CÂMERA DE COMEMORAÇÃO
   if ((state === 'goalPause' || state === 'finished') && world.effects.goalCelebration) {
     const scorerId = world.effects.goalCelebration.scorerButtonId;
     const scorer = world.buttons.find(b => b.id === scorerId);
     if (scorer) {
       targetX = scorer.x;
       targetY = scorer.y;
-      targetZoom = 1.8;
+      targetZoom = 2.0;
     } else {
       targetX = world.ball.x;
       targetY = world.ball.y;
     }
   } else {
-    // 2. LÓGICA NORMAL (Antecipação/Look-ahead)
-    // Aumentamos o look-ahead para a câmera "prever" a direção da bola
-    const lookAheadX = world.ball.vx * 0.45;
-    const lookAheadY = world.ball.vy * 0.45;
+    // 2. LÓGICA NORMAL (Mamoball Style)
+    // Câmera segue a bola com look-ahead baseado na velocidade
+    const lookAheadX = world.ball.vx * 0.48;
+    const lookAheadY = world.ball.vy * 0.48;
     targetX = world.ball.x + lookAheadX;
     targetY = world.ball.y + lookAheadY;
 
@@ -1308,42 +1311,44 @@ function updateCamera(dt) {
     }
 
     const ballSpeed = Math.hypot(world.ball.vx, world.ball.vy);
-    if (ballSpeed > 600) {
-      targetZoom = 1.1; // Abre um pouco quando a bola corre muito
-    } else if (world.ball.x < 150 || world.ball.x > FIELD.width - 150) {
-      targetZoom = 1.6; // Foca mais perto nos gols
+    // Zoom dinâmico: abre um pouco em alta velocidade, fecha no gol
+    if (ballSpeed > 550) {
+      targetZoom = 1.25;
+    } else if (world.ball.x < 120 || world.ball.x > FIELD.width - 120) {
+      targetZoom = 1.85;
     }
   }
 
-  // INTERPOLAÇÃO (Smoothing)
-  const followSpeed = state === 'goalPause' ? 3.0 : 5.5;
+  // INTERPOLAÇÃO SUAVE
+  const followSpeed = state === 'goalPause' ? 3.0 : 6.0;
   camera.x += (targetX - camera.x) * followSpeed * dt;
   camera.y += (targetY - camera.y) * followSpeed * dt;
 
-  const zoomSpeed = state === 'goalPause' ? 2.0 : 3.0;
+  const zoomSpeed = 2.5;
   camera.zoom += (targetZoom - camera.zoom) * zoomSpeed * dt;
 
-  // CLAMPING CORRIGIDO
-  // Usamos o finalScale real para calcular o tamanho da tela em unidades do mundo
-  const finalScale = baseScale * camera.zoom;
-  const viewWidth = (canvas.width / finalScale) / 2;
-  const viewHeight = (canvas.height / finalScale) / 2;
+  // CLAMPING INTELIGENTE
+  // Calculamos quanto do mundo cabe na tela com o zoom atual
+  const finalScale = refScale * camera.zoom;
+  const vWidth = (canvas.width / finalScale) / 2;
+  const vHeight = (canvas.height / finalScale) / 2;
 
-  // Margem de segurança para garantir que as bordas do campo fiquem visíveis
-  const margin = 15;
+  // Permitimos que a câmera saia um pouco do campo para mostrar os gols/torcida (estilo Mamoball)
+  const marginX = 60; 
+  const marginY = 40;
 
-  // Se a largura da visão for maior que o campo total (tela muito larga), centraliza
-  if (viewWidth * 2 >= FIELD.width + margin * 2) {
+  // Clamping X
+  if (vWidth * 2 >= FIELD.width + marginX * 2) {
     camera.x = FIELD.width / 2;
   } else {
-    camera.x = Math.max(viewWidth - margin, Math.min(FIELD.width - viewWidth + margin, camera.x));
+    camera.x = Math.max(vWidth - marginX, Math.min(FIELD.width - vWidth + marginX, camera.x));
   }
 
-  // Se a altura da visão for maior que o campo total (tela muito alta), centraliza
-  if (viewHeight * 2 >= FIELD.height + margin * 2) {
+  // Clamping Y
+  if (vHeight * 2 >= FIELD.height + marginY * 2) {
     camera.y = FIELD.height / 2;
   } else {
-    camera.y = Math.max(viewHeight - margin, Math.min(FIELD.height - viewHeight + margin, camera.y));
+    camera.y = Math.max(vHeight - marginY, Math.min(FIELD.height - vHeight + marginY, camera.y));
   }
 }
 
@@ -1354,13 +1359,15 @@ function updateKeyboardControls(dt) {
   ];
 
   for (const control of controls) {
-    // Só bloqueia controle se for uma partida ONLINE ativa
+    const pId = control.playerId;
+
+    // Bloqueia apenas se for partida online e não for o player local
     if (isOnline) {
       const myId = isHost ? 0 : 1;
-      if (control.playerId !== myId) continue;
+      if (pId !== myId) continue;
     }
 
-    const button = getKeyboardSelection(control.playerId);
+    const button = getKeyboardSelection(pId);
     if (!button) continue;
 
     const up = keyboardInput.keysDown.has(control.up) ? 1 : 0;
@@ -1368,46 +1375,42 @@ function updateKeyboardControls(dt) {
     const down = keyboardInput.keysDown.has(control.down) ? 1 : 0;
     const right = keyboardInput.keysDown.has(control.right) ? 1 : 0;
 
-    const hasReverse = players[control.playerId]?.activePower?.type === 'reverse';
+    const hasReverse = players[pId]?.activePower?.type === 'reverse';
     const mult = hasReverse ? -1 : 1;
-
-    let accelMult = 1.0;
-    let speedMult = 1.0;
 
     const dx = (right - left) * mult;
     const dy = (down - up) * mult;
     
     if (dx !== 0 || dy !== 0) {
-      const accel = 6500 * accelMult;
+      const accel = 6800; 
       button.vx += dx * accel * dt;
       button.vy += dy * accel * dt;
 
-      const maxSpeed = 850 * speedMult;
+      const maxSpeed = 880;
       const clamped = clampMagnitude(button.vx, button.vy, maxSpeed);
       button.vx = clamped.vx;
       button.vy = clamped.vy;
     }
 
-    if (keyboardChargeHeld[control.playerId]) {
-      keyboardCharge[control.playerId] = Math.min(1, keyboardCharge[control.playerId] + dt / 0.85);
-      maybeReleaseKeyboardKick(control.playerId, button);
+    // Lógica de Chute INDEPENDENTE para cada player
+    if (keyboardChargeHeld[pId]) {
+      keyboardCharge[pId] = Math.min(1, keyboardCharge[pId] + dt / 0.80);
+      maybeReleaseKeyboardKick(pId, button);
     } else {
-      keyboardCharge[control.playerId] = 0;
-      keyboardShotLatch[control.playerId] = false;
+      keyboardCharge[pId] = 0;
+      keyboardShotLatch[pId] = false;
     }
     
-    // Pass action (R for P1, L for P2)
-    if (keyboardPassHeld[control.playerId]) {
-      performKeyboardPass(control.playerId, button);
-      keyboardPassHeld[control.playerId] = false; // Single-tap action
+    if (keyboardPassHeld[pId]) {
+      performKeyboardPass(pId, button);
+      keyboardPassHeld[pId] = false; 
     }
 
-    // Chute Rápido (Mamoball Style): se estiver muito perto da bola, o chute é automático no pressionar de E/O
-    if (keyboardChargeHeld[control.playerId]) {
+    // Quick Shot Near Ball
+    if (keyboardChargeHeld[pId]) {
        const dist = Math.hypot(button.x - world.ball.x, button.y - world.ball.y);
-       if (dist < button.radius + world.ball.radius + 12) {
-         // Chute imediato com força proporcional ao tempo de pressão
-         maybeReleaseKeyboardKick(control.playerId, button);
+       if (dist < button.radius + world.ball.radius + 15) {
+         maybeReleaseKeyboardKick(pId, button);
        }
     }
   }
@@ -2071,19 +2074,19 @@ function render() {
   if (!world) return;
   resizeCanvasToCSS();
 
+  // 1. LIMPA TUDO E DESENHA O FUNDO DO ESTÁDIO (Garante que cubra 100% do canvas)
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#050a14'; // Cor escura do estádio
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const isPerspective = state === 'playing' && drag.active;
 
   // camera shake
-  let ox = 0;
-  let oy = 0;
+  let ox = 0, oy = 0;
   if (camera.shake > 0.05) {
     const a = Math.random() * Math.PI * 2;
-    const r = camera.shake;
-    ox = Math.cos(a) * r;
-    oy = Math.sin(a) * r;
+    ox = Math.cos(a) * camera.shake;
+    oy = Math.sin(a) * camera.shake;
   }
 
   if (isPerspective) {
@@ -2092,48 +2095,41 @@ function render() {
     renderTopDown(ox, oy);
   }
 
-  // Overlay de Estádio / Vinheta Estática Superior
+  // Overlay de Vinheta e Efeitos de Gol
   drawStadiumOverlay();
-
   drawGoalCelebrationOverlay();
 }
 
 function drawStadiumOverlay() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  
-  // Sombra suave de refletores/estádio
   const grad = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.width/4, canvas.width/2, canvas.height/2, canvas.width);
   grad.addColorStop(0, 'rgba(0,0,0,0)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.35)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.45)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
 function renderTopDown(ox, oy) {
-  // Configuração da Câmera Dinâmica
-  const baseScale = Math.min(canvas.width / FIELD.width, canvas.height / FIELD.height);
-  const finalScale = baseScale * camera.zoom;
+  // Escala Mamoball: Independente da resolução, mantém o campo grande
+  const refScale = canvas.height / 520; 
+  const finalScale = refScale * camera.zoom;
   
   const viewportX = canvas.width / 2 - camera.x * finalScale;
   const viewportY = canvas.height / 2 - camera.y * finalScale;
 
   ctx.setTransform(finalScale, 0, 0, finalScale, viewportX + ox, viewportY + oy);
 
-  drawStadium(ctx); // Desenha a arquibancada em volta do campo
+  drawStadium(ctx); 
   drawField(ctx);
   powerUps.render(ctx, world);
 
-  // 1. DESENHAR SOMBRAS (Atrás dos objetos)
+  // Sombras
   ctx.save();
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
   const shadowOffset = 4;
-  
-  // Sombra da Bola
   ctx.beginPath();
   ctx.arc(world.ball.x + shadowOffset, world.ball.y + shadowOffset, world.ball.radius, 0, Math.PI * 2);
   ctx.fill();
-  
-  // Sombra dos Botões
   for (const b of world.buttons) {
     ctx.beginPath();
     ctx.arc(b.x + shadowOffset, b.y + shadowOffset, b.radius, 0, Math.PI * 2);
