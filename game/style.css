@@ -298,6 +298,9 @@ canvas{width:100%; height:100%; display:block; touch-action:none; user-select:no
   flex-direction: column;
 }
 
+/* IMPORTANTE: não sobrescrever o comportamento do atributo HTML hidden */
+[hidden] { display: none !important; }
+
 /* Garante que o canvasWrap e o canvas crescem para preencher todo o espaço */
 .screen.fullScreen .canvasWrap {
   flex: 1;

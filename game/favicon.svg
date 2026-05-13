@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Futebol de Botão 2D</title>
+  <defs>
+    <radialGradient id="g" cx="32" cy="24" r="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d7d7d7"/>
+    </radialGradient>
+  </defs>
+  <circle cx="32" cy="32" r="28" fill="url(#g)" stroke="#111" stroke-width="2"/>
+  <polygon points="32,18 23,24 26,35 38,35 41,24" fill="#111"/>
+  <path d="M23 24 L14 28 L16 39 L26 35" fill="#222"/>
+  <path d="M41 24 L50 28 L48 39 L38 35" fill="#222"/>
+  <path d="M26 35 L22 46 L32 52 L42 46 L38 35" fill="#222"/>
+</svg>

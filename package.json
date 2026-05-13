@@ -1,8 +1,9 @@
+
 {
   "name": "futebol-de-botao-2d",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "node dev-server.js"
+    "dev": "npx http-server game -p 3000 -c-1"
   }
 }

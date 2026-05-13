@@ -96,10 +96,18 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
   }
 
   function showScreen(name) {
-    els.screenMenu.hidden = name !== 'menu';
-    els.screenConfig.hidden = name !== 'config';
-    els.screenGame.hidden = name !== 'game';
-    els.screenOnline.hidden = name !== 'online';
+    // Não depender apenas do atributo `hidden`:
+    // a tela do jogo usa CSS com `display:flex` e pode ficar por cima interceptando cliques.
+    const setVisible = (el, visible) => {
+      if (!el) return;
+      el.hidden = !visible;
+      el.style.display = visible ? '' : 'none';
+    };
+
+    setVisible(els.screenMenu, name === 'menu');
+    setVisible(els.screenConfig, name === 'config');
+    setVisible(els.screenGame, name === 'game');
+    setVisible(els.screenOnline, name === 'online');
 
     if (name === 'menu') setTopButtons({ back: false, restart: false });
     if (name === 'config' || name === 'online') setTopButtons({ back: true, restart: false });
@@ -300,6 +308,9 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
 
   fillTeams();
   syncRanges();
+
+  // Estado inicial consistente: garante que a tela do jogo não fique por cima do menu.
+  showScreen('menu');
 
   return {
     showScreen,

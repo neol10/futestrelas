@@ -1,6 +1,6 @@
 import { defaultTeams, createInitialConfig, gameConfig, setConfig } from './config.js';
 import { clamp } from './utils.js';
-import { createUI } from './ui.js';
+import { createUI } from './ui.js?v=20260513';
 import { Ball } from './entities/ball.js';
 import { Button } from './entities/button.js';
 import { Goalie } from './entities/goalie.js';
@@ -8,6 +8,17 @@ import { WorldPhysics } from './physics.js';
 import { PowerUpSystem } from './powerups.js';
 import { GameAudio } from './audio.js';
 import * as online from './online.js';
+
+// Garante que o atributo HTML `hidden` realmente esconda elementos.
+// A tela do jogo usa `display:flex` e pode acabar cobrindo o menu se `hidden` não for respeitado.
+(() => {
+  const id = 'hidden-attribute-fix';
+  if (document.getElementById(id)) return;
+  const style = document.createElement('style');
+  style.id = id;
+  style.textContent = '[hidden]{display:none!important}';
+  document.head.appendChild(style);
+})();
 
 const FIELD = {
   width: 1000,
@@ -193,6 +204,14 @@ function showMenu() {
   state = 'menu';
   isOnline = false;
   isHost = false;
+
+  // Para o loop e limpa o estado do jogo (evita ficar rodando por baixo do menu)
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = 0;
+  world = null;
+  physics = null;
+  powerUps = null;
+
   ui.showScreen('menu');
   ui.setTopButtons({ back: false, restart: false });
   // Restaura o topbar ao voltar para o menu
@@ -222,6 +241,18 @@ function startMatch(config, sel) {
   }
 
   setupWorld();
+
+  // Inicializa câmera de forma estável (evita começar muito aproximado/estranho)
+  if (world?.ball) {
+    camera.x = world.ball.x;
+    camera.y = world.ball.y;
+  } else {
+    camera.x = FIELD.width / 2;
+    camera.y = FIELD.height / 2;
+  }
+  camera.zoom = 1.0;
+  camera.targetZoom = 1.0;
+
   state = 'playing';
   ui.showScreen('game');
   ui.setTopButtons({ back: false, restart: true });
@@ -229,6 +260,14 @@ function startMatch(config, sel) {
   // Esconde o topbar para maximizar o canvas durante o jogo (estilo Mamoball imersivo)
   const topbar = document.getElementById('topbar');
   if (topbar) topbar.style.display = 'none';
+
+  // IMPORTANTE: quando a tela do jogo estava escondida, o canvas podia ficar com tamanho 0.
+  // Abrir/fechar o DevTools dispara um resize e “conserta” — então forçamos aqui.
+  // Dois frames garantem layout após esconder o topbar.
+  requestAnimationFrame(() => {
+    resizeCanvasToCSS();
+    requestAnimationFrame(() => resizeCanvasToCSS());
+  });
 
   // Reset rastro da bola
   if (world.ball) world.ball.trail = [];
@@ -692,6 +731,13 @@ canvas.addEventListener('click', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
+  // Sempre permitir voltar ao menu (o topbar fica escondido durante a partida)
+  if (e.key === 'Escape') {
+    document.dispatchEvent(new CustomEvent('online:stop'));
+    showMenu();
+    return;
+  }
+
   if (state === 'finished') return;
   if (e.key.toLowerCase() === 'r') {
     restartMatch();
@@ -1307,7 +1353,7 @@ function updateCamera(dt) {
   const baseScale = Math.min(canvas.width / FIELD.width, canvas.height / FIELD.height);
   
   let targetX, targetY;
-  let targetZoom = 1.6; // Zoom base estilo Mamoball (1.0 = campo todo; 1.6 = mais focado)
+  let targetZoom = 1.0; // Zoom base (1.0 = campo todo)
 
   // 1. CÂMERA DE COMEMORAÇÃO
   if ((state === 'goalPause' || state === 'finished') && world.effects.goalCelebration) {
@@ -1316,7 +1362,7 @@ function updateCamera(dt) {
     if (scorer) {
       targetX = scorer.x;
       targetY = scorer.y;
-      targetZoom = 2.0;
+      targetZoom = 1.25;
     } else {
       targetX = world.ball.x;
       targetY = world.ball.y;
@@ -1335,9 +1381,9 @@ function updateCamera(dt) {
 
     const ballSpeed = Math.hypot(world.ball.vx, world.ball.vy);
     if (ballSpeed > 550) {
-      targetZoom = 1.3; // Abre um pouco quando bola é rápida
+      targetZoom = 1.0; // Abre quando bola é rápida
     } else if (world.ball.x < 120 || world.ball.x > FIELD.width - 120) {
-      targetZoom = 1.85; // Fecha nos gols
+      targetZoom = 1.15; // Fecha perto dos gols (menos agressivo)
     }
   }
 
