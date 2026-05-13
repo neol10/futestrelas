@@ -1095,7 +1095,7 @@ function update(dt) {
       match.timeLeft = Math.max(0, match.timeLeft - dt);
       emitTimeWarnings(match.timeLeft);
       if (match.timeLeft <= 0) {
-        startGoldenGoal();
+        finishByTime();
       }
     }
 
@@ -2040,6 +2040,19 @@ window.restartGame = () => {
 };
 
 function finishByTime() {
+  if (state === 'finished') return;
+  if (goldenGoalMode) return;
+
+  const scoreA = match?.score?.[0] ?? 0;
+  const scoreB = match?.score?.[1] ?? 0;
+
+  // Se o tempo acabou e não está empatado, acaba o jogo pelo placar.
+  if (scoreA !== scoreB) {
+    finishWithWinner(scoreA > scoreB ? 0 : 1);
+    return;
+  }
+
+  // Empate no tempo: ativa gol de ouro.
   startGoldenGoal();
 }
 

@@ -10,6 +10,8 @@ let _onConnectionSuccess = null;
 let _onDataReceived = null;
 let _onPeerError = null;
 
+let _pendingRemoteId = null;
+
 // Garante que PeerJS esteja disponível (carregado via CDN no HTML)
 function getPeerClass() {
   if (typeof Peer === 'undefined') {
@@ -36,6 +38,7 @@ export function initOnlineSystem({ onConnectionSuccess, onDataReceived, onPeerEr
     peer = null;
     conn = null;
   }
+  _pendingRemoteId = null;
 
   const randomId = Math.floor(1000 + Math.random() * 9000);
   const peerId = `MAMO-${randomId}`;
@@ -43,10 +46,28 @@ export function initOnlineSystem({ onConnectionSuccess, onDataReceived, onPeerEr
   try {
     peer = new PeerClass(peerId, {
       debug: 0, // Silencioso em produção
+      // Explicita servidor de sinalização HTTPS/WSS (mais previsível em deploys)
+      host: '0.peerjs.com',
+      port: 443,
+      secure: true,
+      path: '/',
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun.cloudflare.com:3478' },
+
+          // TURN público (openrelay) — melhora bastante em NAT restrito/VPN/4G.
+          // Obs: serviços públicos podem ter instabilidade/limites.
+          {
+            urls: [
+              'turn:openrelay.metered.ca:80',
+              'turn:openrelay.metered.ca:443',
+              'turn:openrelay.metered.ca:443?transport=tcp',
+            ],
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+          },
         ]
       }
     });
@@ -60,6 +81,13 @@ export function initOnlineSystem({ onConnectionSuccess, onDataReceived, onPeerEr
     console.log('[Online] Meu ID Peer:', id);
     const el = document.getElementById('myPeerId');
     if (el) el.textContent = id;
+
+    // Se o usuário clicou em conectar antes do peer abrir, tenta agora.
+    if (_pendingRemoteId) {
+      const remoteId = _pendingRemoteId;
+      _pendingRemoteId = null;
+      connectToPeer(remoteId, { onConnectionSuccess, onDataReceived });
+    }
   });
 
   // Escuta por conexões de entrada (Host)
@@ -80,6 +108,12 @@ export function initOnlineSystem({ onConnectionSuccess, onDataReceived, onPeerEr
     // Erros recuperáveis não devem derrubar o jogo
     if (err.type === 'peer-unavailable') {
       onPeerError?.({ message: 'Amigo não encontrado. Verifique o código.' });
+    } else if (err.type === 'webrtc') {
+      onPeerError?.({
+        message: 'Falha ao estabelecer WebRTC. Tente outra rede (ou desative VPN).',
+      });
+    } else if (err.type === 'unavailable-id') {
+      onPeerError?.({ message: 'Código já está em uso. Reabra o Online para gerar outro.' });
     } else if (err.type === 'network' || err.type === 'server-error') {
       onPeerError?.({ message: 'Erro de rede. Tente novamente.' });
     } else {
@@ -102,9 +136,23 @@ export function connectToPeer(remoteId, { onConnectionSuccess, onDataReceived })
     return;
   }
 
+  // Se ainda não abriu conexão com o servidor de sinalização, aguarda.
+  if (!peer.open) {
+    _pendingRemoteId = remoteId;
+    console.log('[Online] Peer ainda abrindo; conectarei assim que estiver pronto.');
+    return;
+  }
+
   const trimmedId = remoteId.trim();
   if (!trimmedId) {
     console.error('[Online] ID remoto vazio.');
+    return;
+  }
+
+  // Evita conectar no próprio ID (acontece quando a pessoa testa na mesma aba).
+  if (peer?.id && trimmedId === peer.id) {
+    console.warn('[Online] Tentativa de auto-conexão bloqueada.');
+    _onPeerError?.({ message: 'Use o código do seu amigo (não o seu).' });
     return;
   }
 
@@ -179,4 +227,5 @@ export function destroyOnlineSession() {
     peer = null;
   }
   _isHost = false;
+  _pendingRemoteId = null;
 }
