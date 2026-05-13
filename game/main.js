@@ -410,6 +410,13 @@ function cycleKeyboardSelection(playerId) {
 
   const current = world.keyboardSelectedIndices[playerId] ?? 0;
   const next = (current + 1) % buttons.length;
+  
+  // Marca o botão anterior para frear suavemente até parar
+  const oldButton = buttons[current % buttons.length];
+  if (oldButton) {
+    oldButton.isBraking = true;
+  }
+
   world.keyboardSelectedIndices[playerId] = next;
 }
 
@@ -1702,13 +1709,24 @@ function stabilizeControlledButtons(dt) {
 
   for (const b of world.buttons) {
     const isSelected = getKeyboardSelection(b.playerId) === b;
-    if (!isSelected) continue;
 
-    if (!hasMovementKeysForPlayer(b.playerId)) {
+    if (isSelected) {
+      b.isBraking = false; // Se voltou a ser selecionado, remove o freio automático
+      if (!hasMovementKeysForPlayer(b.playerId)) {
+        b.vx *= brakePower;
+        b.vy *= brakePower;
+        if (Math.abs(b.vx) < 1) b.vx = 0;
+        if (Math.abs(b.vy) < 1) b.vy = 0;
+      }
+    } else if (b.isBraking) {
+      // Botão que acabou de ser trocado continua freando suavemente igual ao selecionado
       b.vx *= brakePower;
       b.vy *= brakePower;
-      if (Math.abs(b.vx) < 1) b.vx = 0;
-      if (Math.abs(b.vy) < 1) b.vy = 0;
+      if (Math.hypot(b.vx, b.vy) < 10) {
+        b.isBraking = false;
+        b.vx = 0;
+        b.vy = 0;
+      }
     }
   }
 }
