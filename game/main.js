@@ -1190,6 +1190,26 @@ window.addEventListener('online:error', (e) => {
   ui.toast('❌ ' + msg, 3000);
 });
 
+// LÓGICA DE SINCRONIZAÇÃO DE LOBBY (UI -> ONLINE)
+document.addEventListener('ui:team-selected', (e) => {
+  if (isOnline) {
+    online.sendGameData({
+      type: 'teamSelected',
+      playerNum: e.detail.playerNum,
+      team: e.detail.team
+    });
+  }
+});
+
+document.addEventListener('ui:config-changed', (e) => {
+  if (isOnline && isHost) {
+    online.sendGameData({
+      type: 'configSync',
+      config: e.detail
+    });
+  }
+});
+
 // MOBILE CONTROLS LOGIC
 function setupMobileControls() {
   const zone = document.getElementById('joystickZone');
@@ -1434,6 +1454,19 @@ function handleOnlineData(data) {
   if (data.type === 'goalScored') {
     if (!isHost) {
       handleGoal(data.scorer);
+    }
+  }
+
+  if (data.type === 'teamSelected') {
+    console.log('[Online] Oponente escolheu o time:', data.team);
+    // Chama selectTeam com o parâmetro 'remote' como true para evitar loop
+    ui.selectTeam(data.playerNum, data.team, true);
+  }
+
+  if (data.type === 'configSync') {
+    if (!isHost) {
+      console.log('[Online] Recebendo configurações do Host...');
+      ui.setConfig(data.config);
     }
   }
 }

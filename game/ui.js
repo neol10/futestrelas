@@ -81,21 +81,37 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
     });
   }
 
-  function selectTeam(playerNum, team) {
+  function selectTeam(playerNum, team, remote = false) {
+    // No online, Host só escolhe J1 e Cliente só escolhe J2
+    const isOnline = els.screenOnline.style.display !== 'none' || els.screenConfig.style.display !== 'none';
+    if (isOnline && !remote) {
+      const isHost = !els.btnStartMatch.classList.contains('client-wait');
+      if (isHost && playerNum === 2) return toast('Você é o J1. O oponente escolhe o J2.', 1500);
+      if (!isHost && playerNum === 1) return toast('Você é o J2. O host escolhe o J1.', 1500);
+    }
+
     if (playerNum === 1) {
       if (team === selectedP2) {
-        toast('Este time já foi escolhido pelo Jogador 2', 800);
+        toast('Este time já foi escolhido pelo oponente', 800);
         return;
       }
       selectedP1 = team;
     } else {
       if (team === selectedP1) {
-        toast('Este time já foi escolhido pelo Jogador 1', 800);
+        toast('Este time já foi escolhido pelo oponente', 800);
         return;
       }
       selectedP2 = team;
     }
+    
     fillTeams();
+
+    // Notifica o sistema de que houve uma mudança na seleção (apenas se for local)
+    if (!remote) {
+      document.dispatchEvent(new CustomEvent('ui:team-selected', { 
+        detail: { playerNum, team } 
+      }));
+    }
   }
 
   function showScreen(name) {
@@ -276,8 +292,24 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
     onRestart?.();
   });
 
-  for (const el of [els.powerSpawnInterval, els.powerDuration, els.gameSpeed]) {
-    el.addEventListener('input', () => syncRanges());
+  for (const el of [els.powerSpawnInterval, els.powerDuration, els.gameSpeed, els.matchTime, els.maxGoals, els.botsPerTeam, els.difficulty, els.botDifficulty, els.goalieDifficulty, els.weatherMode]) {
+    el.addEventListener('input', () => {
+      syncRanges();
+      notifyConfigChange();
+    });
+    el.addEventListener('change', () => {
+      notifyConfigChange();
+    });
+  }
+
+  function notifyConfigChange() {
+    const isOnline = els.screenOnline.style.display !== 'none' || els.screenConfig.style.display !== 'none';
+    const isHost = !els.btnStartMatch.classList.contains('client-wait');
+    if (isOnline && isHost) {
+      document.dispatchEvent(new CustomEvent('ui:config-changed', { 
+        detail: getConfigFromForm() 
+      }));
+    }
   }
 
   els.btnStartMatch.addEventListener('click', () => {
