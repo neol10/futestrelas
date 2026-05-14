@@ -138,7 +138,7 @@ const TEAM_STATS = {
 const KEYBOARD_SHOT_THRESHOLD_MS = 220;
 const KICK_ACTION_BUFFER_MS = 260;
 const MIN_SHOOT_CHARGE = 0.12; // evita chute acidental com micro-toque
-const ONLINE_SYNC_INTERVAL_MS = 70; // ~14Hz (equilíbrio entre fluidez e tráfego)
+const ONLINE_SYNC_INTERVAL_MS = 50; // Equilíbrio ideal para estabilidade em redes variadas
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -925,7 +925,7 @@ canvas.addEventListener('pointerup', () => {
   world.extraTurnGrantedPlayerId = null;
   world.shotCount++;
 
-  // Envia a jogada para o parceiro (no online o host é autoritativo; o cliente envia para o host aplicar)
+  // Envia a jogada para o parceiro (com predição local já aplicada)
   if (isOnline) {
     online.sendGameData({
       type: 'shot',
@@ -1338,10 +1338,28 @@ function handleOnlineData(data) {
 
   if (data.type === 'syncState') {
     if (!isHost && world?.ball && data.ball) {
-      // Interpolação suave: combina a posição real do host com a predição local do cliente
-      const lerpFactor = 0.35;
-      world.ball.x += (data.ball.x - world.ball.x) * lerpFactor;
-      world.ball.y += (data.ball.y - world.ball.y) * lerpFactor;
+      // Sincronização agressiva mas suave
+      const smooth = (cur, target, dtFactor) => {
+        const dx = target.x - cur.x;
+        const dy = target.y - cur.y;
+        const dist = Math.hypot(dx, dy);
+        
+        // Se a diferença for minúscula, ignora para evitar tremores (jitter)
+        if (dist < 0.5) return;
+        
+        // Se for muito grande, teletransporta (anti-lag)
+        if (dist > 160) {
+          cur.x = target.x;
+          cur.y = target.y;
+        } else {
+          // Interpolação rápida
+          cur.x += dx * dtFactor;
+          cur.y += dy * dtFactor;
+        }
+      };
+
+      const f = 0.65; // Fator de correção mais forte
+      smooth(world.ball, data.ball, f);
       world.ball.vx = data.ball.vx;
       world.ball.vy = data.ball.vy;
 
@@ -1349,8 +1367,7 @@ function handleOnlineData(data) {
         data.buttons.forEach(sb => {
           const b = world.buttons.find(rb => rb.id === sb.id);
           if (b) {
-            b.x += (sb.x - b.x) * lerpFactor;
-            b.y += (sb.y - b.y) * lerpFactor;
+            smooth(b, sb, f);
             b.vx = sb.vx;
             b.vy = sb.vy;
           }
@@ -1361,8 +1378,8 @@ function handleOnlineData(data) {
         data.goalies.forEach(sg => {
           const g = world.goalies.find(rg => rg.side === sg.side);
           if (g) {
-            g.x = sg.x; // X é fixo no goleiro, mas garantimos
-            g.y += (sg.y - g.y) * lerpFactor;
+            g.x = sg.x;
+            g.y += (sg.y - g.y) * f;
             g.vx = sg.vx;
             g.vy = sg.vy;
           }
@@ -1788,26 +1805,30 @@ function update(dt, ts) {
     // Sincronização periódica do Host (autoridade)
     if (isOnline && isHost && (ts - lastOnlineSyncTs) >= ONLINE_SYNC_INTERVAL_MS) {
       lastOnlineSyncTs = ts;
+      
+      // Envia players/powers apenas a cada 1.5s ou se algo mudar (otimização de banda)
+      const sendHeavy = (ts % 1500) < 50; 
+
       const syncPayload = {
         type: 'syncState',
-        ball: { x: world.ball.x, y: world.ball.y, vx: world.ball.vx, vy: world.ball.vy },
-        buttons: world.buttons.map(b => ({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy })),
-        goalies: world.goalies.map(g => ({ side: g.side, x: g.x, y: g.y, vx: g.vx, vy: g.vy })),
+        ball: { x: Number(world.ball.x.toFixed(1)), y: Number(world.ball.y.toFixed(1)), vx: Number(world.ball.vx.toFixed(1)), vy: Number(world.ball.vy.toFixed(1)) },
+        buttons: world.buttons.map(b => ({ id: b.id, x: Number(b.x.toFixed(1)), y: Number(b.y.toFixed(1)), vx: Number(b.vx.toFixed(1)), vy: Number(b.vy.toFixed(1)) })),
+        goalies: world.goalies.map(g => ({ side: g.side, x: Number(g.x.toFixed(1)), y: Number(g.y.toFixed(1)), vx: Number(g.vx.toFixed(1)), vy: Number(g.vy.toFixed(1)) })),
         score: match.score,
-        timeLeft: match.timeLeft,
+        timeLeft: Math.round(match.timeLeft),
         state,
         currentPlayerIndex,
         turnLock,
         shotCount: world.shotCount,
         maxShots: world.maxShots,
         goldenGoalMode,
-        players: serializePlayersForSync(),
-        powerUps: serializePowerUpsForSync(),
       };
-      // Debug sync de forma rara (não spam)
-      if (world.shotCount === 0 && Math.random() < 0.05) {
-        console.log('[Sync] Host enviando estado (ball:', syncPayload.ball.x.toFixed(0), ',', syncPayload.ball.y.toFixed(0), ')');
+
+      if (sendHeavy) {
+        syncPayload.players = serializePlayersForSync();
+        syncPayload.powerUps = serializePowerUpsForSync();
       }
+
       online.sendGameData(syncPayload);
     }
   }
