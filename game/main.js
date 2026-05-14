@@ -1318,9 +1318,10 @@ function handleOnlineData(data) {
 
   if (data.type === 'syncState') {
     if (!isHost && world?.ball && data.ball) {
-      // Interpolação suave em vez de teleporte brusco
-      world.ball.x += (data.ball.x - world.ball.x) * 0.4;
-      world.ball.y += (data.ball.y - world.ball.y) * 0.4;
+      // Interpolação suave: combina a posição real do host com a predição local do cliente
+      const lerpFactor = 0.35;
+      world.ball.x += (data.ball.x - world.ball.x) * lerpFactor;
+      world.ball.y += (data.ball.y - world.ball.y) * lerpFactor;
       world.ball.vx = data.ball.vx;
       world.ball.vy = data.ball.vy;
 
@@ -1328,13 +1329,26 @@ function handleOnlineData(data) {
         data.buttons.forEach(sb => {
           const b = world.buttons.find(rb => rb.id === sb.id);
           if (b) {
-            b.x += (sb.x - b.x) * 0.4;
-            b.y += (sb.y - b.y) * 0.4;
+            b.x += (sb.x - b.x) * lerpFactor;
+            b.y += (sb.y - b.y) * lerpFactor;
             b.vx = sb.vx;
             b.vy = sb.vy;
           }
         });
       }
+      
+      if (data.goalies && world.goalies) {
+        data.goalies.forEach(sg => {
+          const g = world.goalies.find(rg => rg.side === sg.side);
+          if (g) {
+            g.x = sg.x; // X é fixo no goleiro, mas garantimos
+            g.y += (sg.y - g.y) * lerpFactor;
+            g.vx = sg.vx;
+            g.vy = sg.vy;
+          }
+        });
+      }
+
       if (data.score) match.score = data.score;
 
       if (typeof data.timeLeft === 'number') match.timeLeft = data.timeLeft;
@@ -1433,6 +1447,26 @@ function update(dt, ts) {
     if (isOnline && !isHost) {
       updateCamera(dt);
       camera.shake = Math.max(0, camera.shake - dt * 20);
+      
+      // PREDIÇÃO LOCAL: Move os objetos com a velocidade atual enquanto aguarda o próximo sync do host.
+      // Isso remove o lag visual e o efeito de 'teletransporte'.
+      if (world.ball) {
+        world.ball.x += world.ball.vx * dt;
+        world.ball.y += world.ball.vy * dt;
+      }
+      if (world.buttons) {
+        for (const b of world.buttons) {
+          b.x += b.vx * dt;
+          b.y += b.vy * dt;
+        }
+      }
+      if (world.goalies) {
+        for (const g of world.goalies) {
+          g.x += g.vx * dt;
+          g.y += g.vy * dt;
+        }
+      }
+
       world.effects.impacts = world.effects.impacts.filter((i) => {
         if (i.vx) i.x += i.vx * dt;
         if (i.vy) i.y += i.vy * dt;
@@ -1725,6 +1759,7 @@ function update(dt, ts) {
         type: 'syncState',
         ball: { x: world.ball.x, y: world.ball.y, vx: world.ball.vx, vy: world.ball.vy },
         buttons: world.buttons.map(b => ({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy })),
+        goalies: world.goalies.map(g => ({ side: g.side, x: g.x, y: g.y, vx: g.vx, vy: g.vy })),
         score: match.score,
         timeLeft: match.timeLeft,
         state,
