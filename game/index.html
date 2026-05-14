@@ -108,8 +108,42 @@
             </div>
 
             <div class="field">
+              <label for="botsPerTeam">Bots por time</label>
+              <select id="botsPerTeam">
+                <option value="1">1 vs 1</option>
+                <option value="2">2 vs 2</option>
+                <option value="3" selected>3 vs 3</option>
+                <option value="4">4 vs 4</option>
+                <option value="5">5 vs 5</option>
+                <option value="6">6 vs 6</option>
+                <option value="7">7 vs 7</option>
+                <option value="8">8 vs 8</option>
+                <option value="9">9 vs 9</option>
+                <option value="10">10 vs 10</option>
+              </select>
+            </div>
+
+            <div class="field">
               <label for="difficulty">Dificuldade da IA</label>
               <select id="difficulty">
+                <option value="easy">Fácil</option>
+                <option value="medium" selected>Médio</option>
+                <option value="hard">Profissional</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="botDifficulty">Dificuldade dos Bots</label>
+              <select id="botDifficulty">
+                <option value="easy">Fácil</option>
+                <option value="medium" selected>Médio</option>
+                <option value="hard">Profissional</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="goalieDifficulty">Dificuldade do Goleiro</label>
+              <select id="goalieDifficulty">
                 <option value="easy">Fácil</option>
                 <option value="medium" selected>Médio</option>
                 <option value="hard">Profissional</option>
@@ -212,7 +246,6 @@
     </main>
   </div>
 
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <script type="module" src="main.js?v=20260513"></script>
 </body>
 </html>

@@ -24,6 +24,7 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
     controlMode: document.getElementById('controlMode'),
     matchTime: document.getElementById('matchTime'),
     maxGoals: document.getElementById('maxGoals'),
+    botsPerTeam: document.getElementById('botsPerTeam'),
     powerUpsEnabled: document.getElementById('powerUpsEnabled'),
     powerSpawnInterval: document.getElementById('powerSpawnInterval'),
     powerDuration: document.getElementById('powerDuration'),
@@ -31,6 +32,8 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
     soundEnabled: document.getElementById('soundEnabled'),
     gameSpeed: document.getElementById('gameSpeed'),
     difficulty: document.getElementById('difficulty'),
+    botDifficulty: document.getElementById('botDifficulty'),
+    goalieDifficulty: document.getElementById('goalieDifficulty'),
     weatherMode: document.getElementById('weatherMode'),
 
     powerSpawnIntervalValue: document.getElementById('powerSpawnIntervalValue'),
@@ -130,13 +133,16 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
       controlMode: els.controlMode.value,
       matchTime: els.matchTime.value,
       maxGoals: els.maxGoals.value,
+      botsPerTeam: els.botsPerTeam?.value ?? '3',
       powerUpsEnabled: !!els.powerUpsEnabled.checked,
       powerSpawnInterval: Number(els.powerSpawnInterval.value),
       powerDuration: Number(els.powerDuration.value),
       goalieAuto: !!els.goalieAuto.checked,
       soundEnabled: !!els.soundEnabled.checked,
       gameSpeed: Number(els.gameSpeed.value),
-      difficulty: els.difficulty?.value ?? 'medium',
+      // support separate difficulty controls if present, otherwise fallback to legacy `difficulty`
+      botDifficulty: els.botDifficulty?.value ?? els.difficulty?.value ?? 'medium',
+      goalieDifficulty: els.goalieDifficulty?.value ?? els.difficulty?.value ?? 'medium',
       weatherMode: els.weatherMode?.value ?? 'clear',
     };
   }
@@ -152,6 +158,7 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
     els.controlMode.value = String(config.controlMode);
     els.matchTime.value = String(config.matchTime);
     els.maxGoals.value = String(config.maxGoals);
+    if (els.botsPerTeam) els.botsPerTeam.value = String(config.botsPerTeam ?? '3');
     els.powerUpsEnabled.checked = !!config.powerUpsEnabled;
     els.powerSpawnInterval.value = String(config.powerSpawnInterval);
     els.powerDuration.value = String(config.powerDuration);
@@ -159,6 +166,10 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
     els.soundEnabled.checked = !!config.soundEnabled;
     els.gameSpeed.value = String(config.gameSpeed);
     if (els.weatherMode && config.weatherMode) els.weatherMode.value = String(config.weatherMode);
+
+    // If the UI has separate selects for bot/goalie difficulty, set them; otherwise keep legacy `difficulty` select
+    if (els.botDifficulty) els.botDifficulty.value = config.botDifficulty ?? config.difficulty ?? 'medium';
+    if (els.goalieDifficulty) els.goalieDifficulty.value = config.goalieDifficulty ?? config.difficulty ?? 'medium';
 
     syncRanges();
   }
@@ -270,9 +281,15 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
   }
 
   els.btnStartMatch.addEventListener('click', () => {
+    // No online, apenas o host clica em iniciar. O cliente recebe o sinal via data.
+    const isOnline = els.screenOnline.style.display !== 'none' || els.screenGame.style.display !== 'none';
+    if (isOnline && els.btnStartMatch.classList.contains('client-wait')) {
+      toast('Aguardando o Host iniciar...', 2000);
+      return;
+    }
+
     const config = getConfigFromForm();
     const selections = getSelections();
-    document.dispatchEvent(new CustomEvent('online:stop'));
     onStartMatch?.(config, selections);
   });
 
@@ -289,9 +306,31 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
 
   els.btnCopyId.addEventListener('click', () => {
     const id = els.myPeerId.textContent;
-    navigator.clipboard.writeText(id);
-    toast('ID Copiado!', 1200);
+    if (!id || id.includes('...')) return;
+    
+    // Tenta usar API moderna
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(id)
+        .then(() => toast('ID Copiado!', 1500))
+        .catch(() => fallbackCopy(id));
+    } else {
+      fallbackCopy(id);
+    }
   });
+
+  function fallbackCopy(text) {
+    const input = document.createElement('input');
+    input.value = text;
+    document.body.appendChild(input);
+    input.select();
+    try {
+      document.execCommand('copy');
+      toast('ID Copiado (fallback)!', 1500);
+    } catch (err) {
+      toast('Erro ao copiar. Selecione e copie manualmente.', 2000);
+    }
+    document.body.removeChild(input);
+  }
 
   els.btnConnect.addEventListener('click', () => {
     const remoteId = els.remotePeerId.value.trim();

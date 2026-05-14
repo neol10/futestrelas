@@ -80,21 +80,26 @@ export function initOnlineSystem({ onConnectionSuccess, onDataReceived, onPeerEr
   peer.on('open', (id) => {
     console.log('[Online] Meu ID Peer:', id);
     const el = document.getElementById('myPeerId');
-    if (el) el.textContent = id;
+    if (el) {
+      el.textContent = id;
+      el.classList.add('ready');
+    }
 
-    // Se o usuário clicou em conectar antes do peer abrir, tenta agora.
+    // Se o usuário clicou em conectar antes do peer abrir, tenta agora com pequeno atraso
     if (_pendingRemoteId) {
       const remoteId = _pendingRemoteId;
       _pendingRemoteId = null;
-      connectToPeer(remoteId, { onConnectionSuccess, onDataReceived });
+      setTimeout(() => {
+        connectToPeer(remoteId, { onConnectionSuccess, onDataReceived });
+      }, 300);
     }
   });
 
   // Escuta por conexões de entrada (Host)
   peer.on('connection', (connection) => {
-    // Rejeita conexões duplicadas
+    // Se já tiver uma conexão aberta, fecha a nova para evitar bugs de estado duplo
     if (conn && conn.open) {
-      console.warn('[Online] Conexão duplicada ignorada.');
+      console.warn('[Online] Bloqueando conexão duplicada.');
       connection.close();
       return;
     }
@@ -104,48 +109,50 @@ export function initOnlineSystem({ onConnectionSuccess, onDataReceived, onPeerEr
   });
 
   peer.on('error', (err) => {
-    console.error('[Online] Erro no Peer:', err.type, err);
-    // Erros recuperáveis não devem derrubar o jogo
+    console.error('[Online] Erro crítico no PeerJS:', err.type, err);
+    
+    // Tratamento amigável de erros comuns
+    let msg = 'Erro na conexão online';
     if (err.type === 'peer-unavailable') {
-      onPeerError?.({ message: 'Amigo não encontrado. Verifique o código.' });
+      msg = 'O código do seu amigo não foi encontrado. Verifique se ele está com a tela aberta.';
     } else if (err.type === 'webrtc') {
-      onPeerError?.({
-        message: 'Falha ao estabelecer WebRTC. Tente outra rede (ou desative VPN).',
-      });
+      msg = 'Bloqueio de rede detectado (NAT/Firewall). Tente usar 4G ou outra rede.';
     } else if (err.type === 'unavailable-id') {
-      onPeerError?.({ message: 'Código já está em uso. Reabra o Online para gerar outro.' });
-    } else if (err.type === 'network' || err.type === 'server-error') {
-      onPeerError?.({ message: 'Erro de rede. Tente novamente.' });
-    } else {
-      onPeerError?.(err);
+      msg = 'ID indisponível. Reiniciando sistema...';
+      setTimeout(() => initOnlineSystem({ onConnectionSuccess, onDataReceived, onPeerError }), 1000);
+    } else if (err.type === 'server-error' || err.type === 'network') {
+      msg = 'Falha no servidor de sinalização. Tentando reconectar...';
     }
+    
+    onPeerError?.({ ...err, message: msg });
   });
 
   peer.on('disconnected', () => {
-    console.warn('[Online] Peer desconectado do servidor. Tentando reconectar...');
-    // Tenta reconectar sem recarregar a página
-    if (peer && !peer.destroyed) {
-      try { peer.reconnect(); } catch (_) {}
-    }
+    console.warn('[Online] Desconectado do servidor. Tentando reconectar em 3s...');
+    setTimeout(() => {
+      if (peer && !peer.destroyed) {
+        try { peer.reconnect(); } catch (_) {}
+      }
+    }, 3000);
   });
 }
 
 export function connectToPeer(remoteId, { onConnectionSuccess, onDataReceived }) {
-  if (!peer) {
-    console.error('[Online] Peer não inicializado.');
-    return;
-  }
-
-  // Se ainda não abriu conexão com o servidor de sinalização, aguarda.
-  if (!peer.open) {
-    _pendingRemoteId = remoteId;
-    console.log('[Online] Peer ainda abrindo; conectarei assim que estiver pronto.');
-    return;
-  }
-
-  const trimmedId = remoteId.trim();
+  const trimmedId = remoteId?.trim() || '';
   if (!trimmedId) {
-    console.error('[Online] ID remoto vazio.');
+    _onPeerError?.({ message: 'O ID não pode estar vazio.' });
+    return;
+  }
+
+  if (!peer) {
+    console.error('[Online] Sistema não inicializado.');
+    return;
+  }
+
+  // Se o Peer ainda não abriu no servidor, guardamos o ID para conectar automático
+  if (!peer.open) {
+    _pendingRemoteId = trimmedId;
+    console.log('[Online] Aguardando Peer abrir para conectar ao ID:', trimmedId);
     return;
   }
 

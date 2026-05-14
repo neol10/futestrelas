@@ -21,8 +21,8 @@ import * as online from './online.js';
 })();
 
 const FIELD = {
-  width: 1000,
-  height: 600,
+  width: 1400,
+  height: 800,
   wall: 18,
   goalWidth: 170,
   goalDepth: 26,
@@ -136,6 +136,9 @@ const TEAM_STATS = {
 };
 
 const KEYBOARD_SHOT_THRESHOLD_MS = 220;
+const KICK_ACTION_BUFFER_MS = 260;
+const MIN_SHOOT_CHARGE = 0.12; // evita chute acidental com micro-toque
+const ONLINE_SYNC_INTERVAL_MS = 70; // ~14Hz (equilíbrio entre fluidez e tráfego)
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -173,6 +176,8 @@ let keyboardCharge = [0, 0];
 let keyboardChargeHeld = [false, false];
 let keyboardShotLatch = [false, false];
 let keyboardPassHeld = [false, false]; // Pass action (R for P1, L for P2)
+let keyboardKickDownAt = [0, 0];
+let keyboardBufferedKick = [null, null]; // { kind: 'pass'|'shoot', charge: number, expiresAt: number }
 let drag = {
   active: false,
   playerIndex: 0,
@@ -183,6 +188,144 @@ let drag = {
 
 let turnLock = false;
 let lastKeyboardShotTime = [0, 0];
+let lastOnlineSyncTs = 0;
+
+function isBallInContact(button, ball, extra = 0) {
+  if (!button || !ball) return false;
+  const contactDistance = button.radius + ball.radius + 18 + extra;
+  const dist = Math.hypot(button.x - ball.x, button.y - ball.y);
+  return dist <= contactDistance;
+}
+
+function bufferKickAction(playerId, kind, charge = 0) {
+  const now = performance.now();
+  keyboardBufferedKick[playerId] = {
+    kind,
+    charge: clamp(charge, 0, 1),
+    expiresAt: now + KICK_ACTION_BUFFER_MS,
+  };
+}
+
+function handleKickRelease(playerId) {
+  if (!world || state !== 'playing') return;
+  const now = performance.now();
+  if (now - lastKeyboardShotTime[playerId] < 120) {
+    keyboardCharge[playerId] = 0;
+    keyboardShotLatch[playerId] = false;
+    return;
+  }
+
+  const duration = now - (keyboardKickDownAt[playerId] || now);
+  const charge = keyboardCharge[playerId];
+
+  keyboardChargeHeld[playerId] = false;
+  keyboardCharge[playerId] = 0;
+  keyboardShotLatch[playerId] = false;
+
+  // toque rápido = passe; segurar com barrinha = chute
+  const wantsShoot = duration >= KEYBOARD_SHOT_THRESHOLD_MS && charge >= MIN_SHOOT_CHARGE;
+  bufferKickAction(playerId, wantsShoot ? 'shoot' : 'pass', charge);
+
+  const button = getKeyboardSelection(playerId);
+  if (button) maybeExecuteBufferedKick(playerId, button);
+}
+
+function maybeExecuteBufferedKick(playerId, button) {
+  if (!world || state !== 'playing') return;
+  const action = keyboardBufferedKick[playerId];
+  if (!action) return;
+
+  const now = performance.now();
+  if (now > action.expiresAt) {
+    keyboardBufferedKick[playerId] = null;
+    return;
+  }
+
+  if (!isBallInContact(button, world.ball, 6)) return;
+
+  if (action.kind === 'pass') {
+    performKeyboardPass(playerId, button);
+  } else {
+    executeKeyboardKick(playerId, button, action.charge);
+  }
+  keyboardBufferedKick[playerId] = null;
+}
+
+function executeKeyboardKick(playerId, button, charge) {
+  if (!world || state !== 'playing') return;
+  if (!button) return;
+
+  const now = performance.now();
+  if (now - lastKeyboardShotTime[playerId] < 120) return;
+  if (!isBallInContact(button, world.ball, 6)) return;
+
+  const ball = world.ball;
+  const usedCharge = clamp(charge, 0, 1);
+  const kickPower = 320 + usedCharge * 980;
+
+  let dirx = ball.x - button.x;
+  let diry = ball.y - button.y;
+  let mag = Math.hypot(dirx, diry);
+
+  if (mag < 0.001) {
+    mag = Math.hypot(button.vx, button.vy);
+    if (mag > 0.001) {
+      dirx = button.vx / mag;
+      diry = button.vy / mag;
+    } else {
+      const goalX = playerId === 0 ? FIELD.width : 0;
+      const goalY = FIELD.height / 2;
+      dirx = goalX - button.x;
+      diry = goalY - button.y;
+      mag = Math.hypot(dirx, diry) || 1;
+      dirx /= mag;
+      diry /= mag;
+    }
+  } else {
+    dirx /= mag;
+    diry /= mag;
+  }
+
+  const power = button.computeShotPower(kickPower, players[playerId]?.activePower);
+  const aim = button.applyAimAssist({ x: dirx, y: diry }, players[playerId]?.activePower);
+
+  ball.vx += aim.x * power;
+  ball.vy += aim.y * power;
+  // recoil leve (igual ao caminho online) para dar mais consistência física
+  button.vx -= aim.x * power * 0.05;
+  button.vy -= aim.y * power * 0.05;
+
+  if (players[playerId]?.activePower?.type === 'powershot') {
+    ball.isPowerShot = true;
+    ball.lastShooterPlayerId = playerId;
+  }
+
+  ball.spin += (button.vx - button.vy) * 0.002;
+
+  world.activeShotPlayerId = playerId;
+  world.shotCount = (world.shotCount || 0) + 1;
+  turnLock = true;
+  lastKeyboardShotTime[playerId] = now;
+
+  if (players[playerId]?.activePower) {
+    powerUps.applyBallEffects(ball, players[playerId].activePower.type);
+    consumeKeyboardPower(players[playerId]);
+  }
+
+  if (isOnline) {
+    online.sendGameData({
+      type: 'kick',
+      buttonId: button.id,
+      power,
+      aim,
+      isPowerShot: players[playerId]?.activePower?.type === 'powershot',
+      shooterPlayerId: playerId
+    });
+  }
+
+  audio.kick(power / 1300);
+  ui.toast('CHUTE!', 320);
+}
 
 let match = {
   timeLeft: 60,
@@ -228,11 +371,23 @@ function showConfig() {
 function startMatch(config, sel) {
   // support quick match where UI may call without args
   const usedConfig = config ?? createInitialConfig();
+
+  // Modo online é estável no controle por arrasto (turnos). Teclado online exigiria sync de input.
+  if (isOnline && usedConfig.controlMode === 'keyboard') {
+    usedConfig.controlMode = 'drag';
+    ui.pop({
+      title: 'Online',
+      message: 'No online, o modo estável é Arrastar e soltar (turnos).',
+      kind: 'info',
+      ttl: 3200,
+    });
+  }
   selections = sel ?? selections;
   setConfig(usedConfig);
   audio.setEnabled(!!usedConfig.soundEnabled);
 
   if (isOnline && isHost) {
+    console.log('[Online] Host enviando startMatch para cliente...');
     online.sendGameData({
       type: 'startMatch',
       config: usedConfig,
@@ -275,6 +430,51 @@ function startMatch(config, sel) {
   if (rafId) cancelAnimationFrame(rafId);
   match.lastTimestamp = performance.now();
   rafId = requestAnimationFrame(gameLoop);
+}
+
+function serializePlayersForSync() {
+  return players.map((p) => ({
+    id: p.id,
+    activePower: p.activePower ?? null,
+    storedPower: p.storedPower ?? null,
+  }));
+}
+
+function applyPlayersFromSync(dataPlayers) {
+  if (!Array.isArray(dataPlayers)) return;
+  for (const sp of dataPlayers) {
+    const id = sp?.id;
+    if (id !== 0 && id !== 1) continue;
+    if (!players?.[id]) continue;
+    players[id].activePower = sp.activePower ?? null;
+    players[id].storedPower = sp.storedPower ?? null;
+  }
+}
+
+function serializePowerUpsForSync() {
+  // Lista pequena, serializável (sem funções)
+  return powerUps?.active?.map((pu) => ({
+    x: pu.x,
+    y: pu.y,
+    type: pu.type,
+    life: pu.life,
+    radius: pu.radius,
+  })) ?? [];
+}
+
+function applyPowerUpsFromSync(list) {
+  if (!powerUps) return;
+  if (!Array.isArray(list)) return;
+  powerUps.active = list
+    .filter((pu) => pu && Number.isFinite(pu.x) && Number.isFinite(pu.y) && typeof pu.type === 'string')
+    .map((pu) => ({
+      x: pu.x,
+      y: pu.y,
+      type: pu.type,
+      life: Number.isFinite(pu.life) ? pu.life : 3,
+      radius: Number.isFinite(pu.radius) ? pu.radius : 14,
+      collected: false,
+    }));
 }
 
 function restartMatch() {
@@ -350,6 +550,8 @@ function setupWorld() {
   keyboardCharge = [0, 0];
   keyboardChargeHeld = [false, false];
   keyboardShotLatch = [false, false];
+  keyboardKickDownAt = [0, 0];
+  keyboardBufferedKick = [null, null];
   ui.syncHUD({
     players,
     currentPlayerIndex,
@@ -410,12 +612,6 @@ function cycleKeyboardSelection(playerId) {
 
   const current = world.keyboardSelectedIndices[playerId] ?? 0;
   const next = (current + 1) % buttons.length;
-  
-  // Marca o botão anterior para frear suavemente até parar
-  const oldButton = buttons[current % buttons.length];
-  if (oldButton) {
-    oldButton.isBraking = true;
-  }
 
   world.keyboardSelectedIndices[playerId] = next;
 }
@@ -553,12 +749,36 @@ function clampMagnitude(vx, vy, maxSpeed) {
 }
 
 function createFormation() {
-  const marginX = 170;
-  const p1 = [
-    { x: marginX, y: 170 },
-    { x: marginX + 50, y: 300 },
-    { x: marginX, y: 430 },
-  ];
+  const numBots = Math.max(1, Math.min(10, Number(gameConfig.botsPerTeam) || 3));
+  const marginX = 200;
+  const fieldHeight = FIELD.height;
+  const p1 = [];
+
+  // Distribui bots em 2-3 linhas dependendo da quantidade
+  if (numBots === 1) {
+    p1.push({ x: marginX, y: fieldHeight / 2 });
+  } else if (numBots === 2) {
+    p1.push({ x: marginX, y: fieldHeight / 3 });
+    p1.push({ x: marginX, y: (2 * fieldHeight) / 3 });
+  } else {
+    const rowsCount = numBots <= 3 ? 1 : numBots <= 6 ? 2 : 3;
+    const botsPerRow = Math.ceil(numBots / rowsCount);
+    const rowSpacing = (fieldHeight - 100) / Math.max(1, rowsCount - 1);
+    let botIndex = 0;
+
+    for (let row = 0; row < rowsCount && botIndex < numBots; row++) {
+      const botsInRow = Math.min(botsPerRow, numBots - botIndex);
+      const colSpacing = botsInRow > 1 ? (300 / (botsInRow - 1)) : 0;
+      const rowY = 50 + row * rowSpacing;
+      const baseX = marginX + (row % 2 === 0 ? 0 : 80); // pequeno offset
+
+      for (let col = 0; col < botsInRow && botIndex < numBots; col++) {
+        const posX = baseX + col * colSpacing;
+        p1.push({ x: posX, y: rowY });
+        botIndex++;
+      }
+    }
+  }
 
   const p2 = p1.map((pos) => ({ x: FIELD.width - pos.x, y: pos.y }));
   return { p1, p2 };
@@ -694,14 +914,26 @@ canvas.addEventListener('pointerup', () => {
   diry = aim.y;
   b.ownerPower = players[currentPlayerIndex]?.activePower ?? null;
 
-  b.vx += dirx * power;
-  b.vy += diry * power;
+  const impulse = { x: dirx * power, y: diry * power };
+
+  b.vx += impulse.x;
+  b.vy += impulse.y;
   b.lastShotAt = performance.now();
   turnLock = true;
   world.activeShotPlayerId = currentPlayerIndex;
   world.extraTurnGranted = false;
   world.extraTurnGrantedPlayerId = null;
   world.shotCount++;
+
+  // Envia a jogada para o parceiro (no online o host é autoritativo; o cliente envia para o host aplicar)
+  if (isOnline) {
+    online.sendGameData({
+      type: 'shot',
+      buttonId: b.id,
+      impulse,
+      playerId: b.playerId,
+    });
+  }
 
   const shotPower = players[currentPlayerIndex]?.activePower;
   if (shotPower) {
@@ -776,18 +1008,14 @@ window.addEventListener('keydown', (e) => {
     useKeyboardPower(1);
   }
   if (code === 'KeyE' && state === 'playing') {
+    keyboardKickDownAt[0] = performance.now();
+    keyboardBufferedKick[0] = null;
     keyboardChargeHeld[0] = true;
   }
   if (code === 'KeyO' && state === 'playing') {
+    keyboardKickDownAt[1] = performance.now();
+    keyboardBufferedKick[1] = null;
     keyboardChargeHeld[1] = true;
-  }
-  
-  // Pass actions: R for P1 (WASD), L for P2 (Arrows)
-  if (code === 'KeyR' && state === 'playing') {
-    keyboardPassHeld[0] = true;
-  }
-  if (code === 'KeyL' && state === 'playing') {
-    keyboardPassHeld[1] = true;
   }
   
   if (code === 'ShiftLeft' || code === 'Space') {
@@ -815,20 +1043,10 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => {
   const code = e.code;
   if (code === 'KeyE') {
-    keyboardChargeHeld[0] = false;
-    keyboardShotLatch[0] = false;
-    keyboardCharge[0] = 0;
+    handleKickRelease(0);
   }
   if (code === 'KeyO') {
-    keyboardChargeHeld[1] = false;
-    keyboardShotLatch[1] = false;
-    keyboardCharge[1] = 0;
-  }
-  if (code === 'KeyR') {
-    keyboardPassHeld[0] = false;
-  }
-  if (code === 'KeyL') {
-    keyboardPassHeld[1] = false;
+    handleKickRelease(1);
   }
   keyboardInput.keysDown.delete(code);
 });
@@ -857,16 +1075,67 @@ document.addEventListener('online:init', () => {
     onConnectionSuccess: ({ isHost: hostFlag }) => {
       isOnline = true;
       isHost = hostFlag;
-      ui.toast(isHost ? '🟢 Amigo conectado!' : '🟢 Conectado ao Host!', 2500);
-      if (!isHost) {
-        ui.pop({ title: 'Aguardando', message: 'O Host vai configurar a partida...', kind: 'info', ttl: 4000 });
+      console.log('[Game] Online conectado. isHost:', hostFlag);
+      
+      if (hostFlag) {
+        // Host aguarda cliente — vai para config pra poder começar
+        ui.toast('🟢 Cliente conectado!', 2500);
+        ui.pop({
+          title: 'Pronto para começar',
+          message: 'Configure a partida e clique em "Iniciar".',
+          kind: 'success',
+          ttl: 4000
+        });
+        
+        const btn = document.getElementById('btnStartMatch');
+        if (btn) {
+          btn.classList.remove('client-wait');
+          btn.textContent = 'Iniciar Partida';
+        }
+
+        // Se ainda está em screenOnline, muda para config
+        setTimeout(() => {
+          if (state === 'menu' || state === 'online') {
+            showConfig();
+          }
+        }, 500);
+      } else {
+        // Cliente aguarda host configurar
+        ui.toast('🟢 Conectado ao Host!', 2500);
+        
+        const btn = document.getElementById('btnStartMatch');
+        if (btn) {
+          btn.classList.add('client-wait');
+          btn.textContent = 'Aguardando Host...';
+        }
+
+        ui.pop({
+          title: 'Aguardando',
+          message: 'O Host vai configurar a partida em alguns segundos...',
+          kind: 'info',
+          ttl: 5000
+        });
+        
+        // Cliente também vai para a tela de config para ver o que o host está escolhendo (HUD sync vai atualizar as opções)
+        setTimeout(() => {
+          if (state === 'menu' || state === 'online') {
+            showConfig();
+          }
+        }, 500);
       }
     },
     onDataReceived: (data) => handleOnlineData(data),
     onPeerError: (err) => {
       const msg = err?.message ?? 'Erro na conexão online';
+      console.error('[Game] Erro online:', msg);
       ui.toast('❌ ' + msg, 4000);
       ui.pop({ title: 'Erro Online', message: msg, kind: 'error', ttl: 4000 });
+      // Volta para menu em caso de erro
+      setTimeout(() => {
+        if (state !== 'playing') {
+          showMenu();
+        }
+      }, 2000);
     }
   });
 });
@@ -876,13 +1145,30 @@ document.addEventListener('online:connect', (e) => {
     onConnectionSuccess: ({ isHost: hostFlag }) => {
       isOnline = true;
       isHost = hostFlag;
-      ui.toast('🟢 Conectado com sucesso!', 2000);
+      console.log('[Game] Conectado como:', hostFlag ? 'Host' : 'Cliente');
+      
+      if (!hostFlag) {
+        // Cliente mostram que conectou
+        ui.toast('🟢 Conectado ao Host!', 2500);
+        ui.pop({
+          title: 'Conectado',
+          message: 'Aguarde o Host iniciar a partida...',
+          kind: 'success',
+          ttl: 3000
+        });
+      }
     },
-    onDataReceived: (data) => handleOnlineData(data)
+    onDataReceived: (data) => handleOnlineData(data),
+    onPeerError: (err) => {
+      console.error('[Game] Erro ao conectar:', err);
+      const msg = err?.message ?? 'Falha na conexão';
+      ui.toast('❌ ' + msg, 4000);
+    }
   });
 });
 
 document.addEventListener('online:stop', () => {
+  console.log('[Game] Online parado');
   isOnline = false;
   isHost = false;
   online.destroyOnlineSession?.();
@@ -890,6 +1176,7 @@ document.addEventListener('online:stop', () => {
 
 // Desconexão do parceiro durante a partida — sem reload!
 window.addEventListener('online:disconnected', () => {
+  console.warn('[Game] Parceiro desconectado');
   isOnline = false;
   isHost = false;
   ui.toast('⚠️ Parceiro desconectado', 4000);
@@ -985,13 +1272,13 @@ function setupMobileControls() {
 
   btnKick?.addEventListener('touchstart', (e) => { 
     e.preventDefault(); 
+    keyboardKickDownAt[0] = performance.now();
+    keyboardBufferedKick[0] = null;
     keyboardChargeHeld[0] = true; 
   });
   btnKick?.addEventListener('touchend', (e) => { 
     e.preventDefault(); 
-    keyboardChargeHeld[0] = false;
-    const b = getKeyboardSelection(0);
-    if (b) maybeReleaseKeyboardKick(0, b);
+    handleKickRelease(0);
   });
 }
 
@@ -999,7 +1286,15 @@ function setupMobileControls() {
 setupMobileControls();
 
 function handleOnlineData(data) {
-  if (!data || typeof data !== 'object') return;
+  if (!data || typeof data !== 'object') {
+    console.warn('[Online] Dados inválidos recebidos:', data);
+    return;
+  }
+  
+  // Debug: log para mensagens importante
+  if (data.type === 'startMatch' || data.type === 'syncState') {
+    console.log('[Online] Recebido:', data.type);
+  }
 
   if (data.type === 'kick') {
     if (!world?.ball || !world.buttons) return;
@@ -1017,6 +1312,7 @@ function handleOnlineData(data) {
         world.ball.lastShooterPlayerId = data.shooterPlayerId ?? null;
       }
       audio.kick(power / 1300);
+      console.log('[Online] Chute remoto aplicado');
     }
   }
 
@@ -1040,13 +1336,84 @@ function handleOnlineData(data) {
         });
       }
       if (data.score) match.score = data.score;
+
+      if (typeof data.timeLeft === 'number') match.timeLeft = data.timeLeft;
+      if (typeof data.state === 'string') state = data.state;
+      if (typeof data.currentPlayerIndex === 'number') currentPlayerIndex = data.currentPlayerIndex;
+      if (typeof data.turnLock === 'boolean') turnLock = data.turnLock;
+      if (typeof data.shotCount === 'number') world.shotCount = data.shotCount;
+      if (typeof data.maxShots === 'number') world.maxShots = data.maxShots;
+      if (typeof data.goldenGoalMode === 'boolean') goldenGoalMode = data.goldenGoalMode;
+
+      applyPlayersFromSync(data.players);
+      applyPowerUpsFromSync(data.powerUps);
     }
   }
 
+  // Jogada remota no modo arrastar: aplica impulso no botão.
+  if (data.type === 'shot') {
+    if (!world?.buttons) return;
+    const button = world.buttons.find((b) => b.id === data.buttonId);
+    if (!button) return;
+
+    const ix = data.impulse?.x;
+    const iy = data.impulse?.y;
+    if (!Number.isFinite(ix) || !Number.isFinite(iy)) return;
+
+    // Se for host, aplica como jogada do remoto (player 1). Se for cliente, apenas replica.
+    if (isHost) {
+      if (state !== 'playing') return;
+      if (gameConfig.controlMode === 'keyboard') return;
+      if (!allStopped() || drag.active) return;
+
+      const expectedRemoteId = 1;
+      if (button.playerId !== expectedRemoteId) return;
+      if (currentPlayerIndex !== expectedRemoteId) return;
+      if (world.shotCount >= world.maxShots) return;
+
+      button.vx += ix;
+      button.vy += iy;
+      button.lastShotAt = performance.now();
+      turnLock = true;
+      world.activeShotPlayerId = currentPlayerIndex;
+      world.extraTurnGranted = false;
+      world.extraTurnGrantedPlayerId = null;
+      world.shotCount++;
+
+      const shotPower = players[currentPlayerIndex]?.activePower;
+      if (shotPower) {
+        powerUps.applyBallEffects(world.ball, shotPower.type);
+        consumeKeyboardPower(players[currentPlayerIndex]);
+      }
+      audio.kick(Math.hypot(ix, iy) / 1300);
+      return;
+    }
+
+    // Cliente replica a jogada do host (player 0) para responsividade.
+    button.vx += ix;
+    button.vy += iy;
+    button.lastShotAt = performance.now();
+
+    // Estado básico para bloquear novos chutes antes do próximo sync.
+    if (typeof data.playerId === 'number') {
+      currentPlayerIndex = data.playerId;
+    }
+    turnLock = true;
+    world.activeShotPlayerId = currentPlayerIndex;
+    world.extraTurnGranted = false;
+    world.extraTurnGrantedPlayerId = null;
+    world.shotCount = (world.shotCount || 0) + 1;
+    audio.kick(Math.hypot(ix, iy) / 1300);
+  }
+
   if (data.type === 'startMatch') {
+    console.log('[Online] Cliente recebeu startMatch, iniciando jogo...');
     if (data.config && data.selections) {
       startMatch(data.config, data.selections);
       ui.showScreen('game');
+      console.log('[Online] Cliente entrou no jogo');
+    } else {
+      console.error('[Online] startMatch incompleto:', data);
     }
   }
 
@@ -1057,10 +1424,45 @@ function handleOnlineData(data) {
   }
 }
 
-function update(dt) {
+function update(dt, ts) {
   try {
     if (!world) return;
     if (state === 'finished') return;
+
+    // No online, o host é autoritativo. O cliente apenas renderiza/suaviza via syncState.
+    if (isOnline && !isHost) {
+      updateCamera(dt);
+      camera.shake = Math.max(0, camera.shake - dt * 20);
+      world.effects.impacts = world.effects.impacts.filter((i) => {
+        if (i.vx) i.x += i.vx * dt;
+        if (i.vy) i.y += i.vy * dt;
+        if (i.type === 'grass') {
+          i.vy += 650 * dt;
+          i.scale = (i.scale || 1) * 0.98;
+        }
+        if (i.type === 'confetti') {
+          i.vy += 520 * dt;
+          i.rot = (i.rot || 0) + (i.spin || 0) * dt;
+          i.scale = (i.scale || 1) * 0.995;
+        }
+        return (i.life -= dt) > 0;
+      });
+
+      ui.syncHUD({
+        players,
+        currentPlayerIndex,
+        match,
+        config: gameConfig,
+        state,
+        canShoot: allStopped() && !drag.active,
+        controlMode: gameConfig.controlMode,
+        keyboardSelectionText: getKeyboardSelectionText(),
+        goldenGoalMode,
+        shotCount: world.shotCount,
+        maxShots: world.maxShots,
+      });
+      return;
+    }
 
     const gameSpeed = Number(gameConfig.gameSpeed);
 
@@ -1148,9 +1550,12 @@ function update(dt) {
       },
     });
 
-    updateBotMovement(dt);
+    // Update bots using `botDifficulty` (fallback to legacy `difficulty`)
+    updateBotMovement(dt, gameConfig.botDifficulty ?? gameConfig.difficulty ?? 'medium');
 
-    for (const g of world.goalies) g.update(dt, world, gameConfig);
+    // Update goalies using `goalieDifficulty` (fallback to legacy `aiDifficulty` or `difficulty`)
+    const goalieCfg = { ...gameConfig, aiDifficulty: gameConfig.goalieDifficulty ?? gameConfig.aiDifficulty ?? gameConfig.difficulty };
+    for (const g of world.goalies) g.update(dt, world, goalieCfg);
 
     // Power-ups em tempo real no loop principal
     for (const p of players) {
@@ -1313,14 +1718,29 @@ function update(dt) {
       maxShots: world.maxShots,
     });
     
-    // Sincronização Periódica do Host
-    if (isOnline && isHost && Math.floor(ts / 16) % 10 === 0) {
-      online.sendGameData({
+    // Sincronização periódica do Host (autoridade)
+    if (isOnline && isHost && (ts - lastOnlineSyncTs) >= ONLINE_SYNC_INTERVAL_MS) {
+      lastOnlineSyncTs = ts;
+      const syncPayload = {
         type: 'syncState',
         ball: { x: world.ball.x, y: world.ball.y, vx: world.ball.vx, vy: world.ball.vy },
         buttons: world.buttons.map(b => ({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy })),
-        score: match.score
-      });
+        score: match.score,
+        timeLeft: match.timeLeft,
+        state,
+        currentPlayerIndex,
+        turnLock,
+        shotCount: world.shotCount,
+        maxShots: world.maxShots,
+        goldenGoalMode,
+        players: serializePlayersForSync(),
+        powerUps: serializePowerUpsForSync(),
+      };
+      // Debug sync de forma rara (não spam)
+      if (world.shotCount === 0 && Math.random() < 0.05) {
+        console.log('[Sync] Host enviando estado (ball:', syncPayload.ball.x.toFixed(0), ',', syncPayload.ball.y.toFixed(0), ')');
+      }
+      online.sendGameData(syncPayload);
     }
   }
 
@@ -1466,23 +1886,17 @@ function updateKeyboardControls(dt) {
     // Lógica de Chute INDEPENDENTE para cada player
     if (keyboardChargeHeld[pId]) {
       keyboardCharge[pId] = Math.min(1, keyboardCharge[pId] + dt / 0.80);
-      maybeReleaseKeyboardKick(pId, button);
     } else {
       keyboardCharge[pId] = 0;
       keyboardShotLatch[pId] = false;
     }
+
+    // Executa ação (passe/chute) bufferizada quando encostar na bola
+    maybeExecuteBufferedKick(pId, button);
     
     if (keyboardPassHeld[pId]) {
       performKeyboardPass(pId, button);
       keyboardPassHeld[pId] = false; 
-    }
-
-    // Quick Shot Near Ball
-    if (keyboardChargeHeld[pId]) {
-       const dist = Math.hypot(button.x - world.ball.x, button.y - world.ball.y);
-       if (dist < button.radius + world.ball.radius + 15) {
-         maybeReleaseKeyboardKick(pId, button);
-       }
     }
   }
 }
@@ -1531,166 +1945,256 @@ function performDash(playerId) {
 
 function updateCautiousBotTouches(dt) {
   if (!world || state !== 'playing') return;
-
   const ball = world.ball;
   const now = performance.now();
-  const touchDistance = ball.radius + 18;
+  const touchRange = ball.radius + 18 + 6;
 
   for (const button of world.buttons) {
     const player = players[button.playerId];
     if (!player) continue;
 
-    const isDraggedButton = drag.active && button.id === drag.buttonId;
-    const isKeyboardButton = gameConfig.controlMode === 'keyboard' && getKeyboardSelection(button.playerId) === button;
-    if (isDraggedButton || isKeyboardButton) continue;
-
+    const isDragged = drag.active && drag.buttonId === button.id;
+    const isKeyboardSelected = gameConfig.controlMode === 'keyboard' && getKeyboardSelection(button.playerId) === button;
+    if (isDragged || isKeyboardSelected) continue;
     if (player.activePower?.type === 'stun' || player.activePower?.type === 'freeze') continue;
-    if (now - button.botActionAt < 700) continue;
+
+    const difficulty = gameConfig.botDifficulty || gameConfig.difficulty || 'medium';
+    const cooldowns = { easy: 900, medium: 600, hard: 420 };
+    if (now - (button.botActionAt || 0) < (cooldowns[difficulty] || 600)) continue;
 
     const dx = ball.x - button.x;
     const dy = ball.y - button.y;
     const dist = Math.hypot(dx, dy);
-    if (dist > button.radius + touchDistance) continue;
+    if (dist > touchRange) continue;
     if (Math.hypot(ball.vx, ball.vy) > 520) continue;
 
-    const teammates = getButtonsForPlayer(button.playerId).filter((candidate) => candidate.id !== button.id);
-    let target = null;
-
-    if (teammates.length > 0) {
-      target = teammates.reduce((best, candidate) => {
-        if (!best) return candidate;
-        const bestScore = Math.hypot(best.x - ball.x, best.y - ball.y);
-        const candidateScore = Math.hypot(candidate.x - ball.x, candidate.y - ball.y);
-        return candidateScore < bestScore ? candidate : best;
-      }, null);
-    }
-
+    const teammates = getButtonsForPlayer(button.playerId).filter((b) => b.id !== button.id);
     const goalX = button.playerId === 0 ? FIELD.width : 0;
     const goalY = FIELD.height / 2;
-    
-    // AI difficulty settings
-    const difficultySettings = {
-      easy: { passChance: 0.5 },
-      normal: { passChance: 0.3 },
-      hard: { passChance: 0.15 },
-    };
-    const difficulty = gameConfig.aiDifficulty || 'normal';
-    const settings = difficultySettings[difficulty] || difficultySettings.normal;
-    
-    // Tactical decision: preferir passe se companheiro estiver em boa posicao
-    let shouldPass = false;
-    if (target) {
-      const teammateGoalDist = Math.hypot(goalX - target.x, goalY - target.y);
-      const selfGoalDist = Math.hypot(goalX - button.x, goalY - target.y);
-      const passLooksGood = teammateGoalDist < selfGoalDist - 40;
-      const passRoll = Math.random();
-      shouldPass = passLooksGood || passRoll < settings.passChance;
-    }
-    
-    let targetX, targetY;
-    let shotPowerMult = 1;
+    const toGoalDist = Math.hypot(goalX - button.x, goalY - button.y);
 
-    if (shouldPass && target) {
-      targetX = target.x;
-      targetY = target.y;
-      shotPowerMult = 0.35; // Gentler for passes
-    } else {
-      targetX = goalX;
-      targetY = goalY;
-      shotPowerMult = 0.65; // Stronger for shots
+    // EASY: mini-condução — leva a bola suavemente em direção ao gol adversario, bot persegue
+    if (difficulty === 'easy') {
+      const dirx = (goalX - button.x) / Math.max(1, Math.hypot(goalX - button.x, goalY - button.y));
+      const diry = (goalY - button.y) / Math.max(1, Math.hypot(goalX - button.x, goalY - button.y));
+      const nudge = 200 + Math.random() * 100;
+      ball.vx += dirx * nudge * 0.65;
+      ball.vy += diry * nudge * 0.65;
+      // botão segue a bola
+      button.vx += dirx * 120 * dt;
+      button.vy += diry * 120 * dt;
+      button.botActionAt = now;
+      button.lastShotAt = now;
+      if (world.effects) {
+        world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.20, radius: 11, life: 0.15, maxLife: 0.15, color: player.colors?.[0] });
+      }
+      audio.kick(0.20);
+      continue;
     }
 
-    let shotDx = targetX - button.x;
-    let shotDy = targetY - button.y;
-    let shotDist = Math.hypot(shotDx, shotDy) || 1;
-    shotDx /= shotDist;
-    shotDy /= shotDist;
+    // MEDIUM: toca a bola — prefere passes curtos para companheiros ou empurra gentilmente ao gol
+    if (difficulty === 'medium') {
+      let target = null;
+      if (teammates.length > 0) {
+        // escolhe companheiro mais próximo da bola
+        target = teammates.reduce((best, c) => {
+          if (!best) return c;
+          return Math.hypot(c.x - ball.x, c.y - ball.y) < Math.hypot(best.x - ball.x, best.y - ball.y) ? c : best;
+        }, null);
+      }
 
-    const basePull = 72 + Math.random() * 64;
-    const gentlePower = button.computeShotPower(basePull, player.activePower) * shotPowerMult;
-    const distanceToGoal = Math.hypot(goalX - button.x, goalY - targetY);
-    const aim = button.applyAimAssist({ x: shotDx, y: shotDy }, player.activePower, distanceToGoal, gentlePower);
+      if (target && Math.random() < 0.55) {
+        // passe curto com melhor condução
+        const pdx = target.x - button.x;
+        const pdy = target.y - button.y;
+        const pmag = Math.hypot(pdx, pdy) || 1;
+        const aim = button.applyAimAssist({ x: pdx / pmag, y: pdy / pmag }, player.activePower, Math.hypot(goalX - target.x, goalY - target.y), 0.5);
+        const power = button.computeShotPower(380 + Math.random() * 140, player.activePower) * 0.50;
+        ball.vx += aim.x * power;
+        ball.vy += aim.y * power;
+        button.vx += aim.x * power * 0.08;
+        button.vy += aim.y * power * 0.08;
+        button.botActionAt = now;
+        button.lastShotAt = now;
+        if (world.effects) world.effects.impacts.push({ x: (button.x + target.x) / 2, y: (button.y + target.y) / 2, strength: 0.25, radius: 13, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
+        audio.kick(power / 1300, 'pass');
+        continue;
+      }
 
-    ball.vx += aim.x * gentlePower;
-    ball.vy += aim.y * gentlePower;
-
-    // Trigger PowerShot
-    if (player.activePower?.type === 'powershot') {
-      ball.isPowerShot = true;
-      ball.lastShooterPlayerId = player.id;
+      // empurra para o gol com bom controle
+      const gdx = goalX - button.x;
+      const gdy = goalY - button.y;
+      const gmag = Math.hypot(gdx, gdy) || 1;
+      const aimG = button.applyAimAssist({ x: gdx / gmag, y: gdy / gmag }, player.activePower, toGoalDist, 0.54);
+      const gPower = button.computeShotPower(440 + Math.random() * 200, player.activePower) * 0.54;
+      ball.vx += aimG.x * gPower;
+      ball.vy += aimG.y * gPower;
+      button.vx += aimG.x * gPower * 0.08;
+      button.vy += aimG.y * gPower * 0.08;
+      button.botActionAt = now;
+      button.lastShotAt = now;
+      if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.26, radius: 13, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
+      audio.kick(gPower / 1300, 'touch');
+      continue;
     }
 
-    ball.spin += (Math.random() > 0.5 ? 1 : -1) * 0.6;
-    button.vx -= aim.x * gentlePower * 0.045;
-    button.vy -= aim.y * gentlePower * 0.045;
-    button.lastShotAt = now;
-    button.botActionAt = now;
+    // HARD: toca e tenta fazer gol — preferir acionar atacante/striker ou finalizar se perto
+    if (difficulty === 'hard') {
+      // procura striker (mais perto do gol adversário)
+      const team = getButtonsForPlayer(button.playerId);
+      let striker = null;
+      if (team.length > 0) {
+        striker = team.reduce((best, c) => {
+          if (!best) return c;
+          const bd = Math.hypot(goalX - best.x, goalY - best.y);
+          const cd = Math.hypot(goalX - c.x, goalY - c.y);
+          return cd < bd ? c : best;
+        }, null);
+      }
 
-    if (world.effects) {
-      world.effects.impacts.push({
-        x: (button.x + ball.x) / 2,
-        y: (button.y + ball.y) / 2,
-        strength: 0.25,
-        radius: 10,
-        life: 0.16,
-        maxLife: 0.16,
-        color: player.colors?.[0] ?? 'rgba(255,255,255,.7)',
-      });
+      // se perto do gol, finaliza com força
+      if (toGoalDist < 240) {
+        const gdx = goalX - button.x;
+        const gdy = goalY - button.y;
+        const gmag = Math.hypot(gdx, gdy) || 1;
+        const aim = button.applyAimAssist({ x: gdx / gmag, y: gdy / gmag }, player.activePower, toGoalDist, 0.92);
+        const power = button.computeShotPower(760 + Math.random() * 360, player.activePower) * 0.90;
+        ball.vx += aim.x * power;
+        ball.vy += aim.y * power;
+        button.vx += aim.x * power * 0.12;
+        button.vy += aim.y * power * 0.12;
+        button.botActionAt = now;
+        button.lastShotAt = now;
+        if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.38, radius: 15, life: 0.18, maxLife: 0.18, color: player.colors?.[0] });
+        if (player.activePower?.type === 'powershot') { ball.isPowerShot = true; ball.lastShooterPlayerId = player.id; }
+        audio.kick(power / 1300, 'shoot');
+        continue;
+      }
+
+      // caso contrário, tenta acionar o striker se existir (melhor condução)
+      if (striker && striker.id !== button.id) {
+        const pdx = striker.x - button.x;
+        const pdy = striker.y - button.y;
+        const pmag = Math.hypot(pdx, pdy) || 1;
+        const aim = button.applyAimAssist({ x: pdx / pmag, y: pdy / pmag }, player.activePower, Math.hypot(goalX - striker.x, goalY - striker.y), 0.75);
+        const power = button.computeShotPower(540 + Math.random() * 260, player.activePower) * 0.75;
+        ball.vx += aim.x * power;
+        ball.vy += aim.y * power;
+        button.vx += aim.x * power * 0.10;
+        button.vy += aim.y * power * 0.10;
+        button.botActionAt = now;
+        button.lastShotAt = now;
+        if (world.effects) world.effects.impacts.push({ x: (button.x + striker.x) / 2, y: (button.y + striker.y) / 2, strength: 0.34, radius: 15, life: 0.18, maxLife: 0.18, color: player.colors?.[0] });
+        audio.kick(power / 1300, 'pass');
+        continue;
+      }
+
+      // fallback: empurra para o gol com mais força
+      const gdx = goalX - button.x;
+      const gdy = goalY - button.y;
+      const gmag = Math.hypot(gdx, gdy) || 1;
+      const aim = button.applyAimAssist({ x: gdx / gmag, y: gdy / gmag }, player.activePower, toGoalDist, 0.70);
+      const power = button.computeShotPower(500 + Math.random() * 280, player.activePower) * 0.70;
+      ball.vx += aim.x * power;
+      ball.vy += aim.y * power;
+      button.vx += aim.x * power * 0.10;
+      button.vy += aim.y * power * 0.10;
+      button.botActionAt = now;
+      button.lastShotAt = now;
+      if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.30, radius: 14, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
+      audio.kick(power / 1300, 'push');
+      continue;
     }
-
-    audio.kick(gentlePower / 1300, shouldPass ? 'pass' : 'shoot');
   }
 }
 
-function updateBotMovement(dt) {
+function updateBotMovement(dt, botDifficulty) {
   if (!world || state !== 'playing') return;
+  // Se for online e não for o Host, não calcula movimento (espera sync do host)
+  if (isOnline && !isHost) return;
 
-  // Multiplicadores de Dificuldade
-  const difficulty = gameConfig.difficulty || 'medium';
+  const difficulty = botDifficulty || gameConfig.botDifficulty || gameConfig.difficulty || 'medium';
   const diffMap = {
-    'easy': { accel: 0.65, maxSpeed: 0.7 },
-    'medium': { accel: 1.0, maxSpeed: 1.0 },
-    'hard': { accel: 1.45, maxSpeed: 1.35 }
+    easy: { accel: 0.55, maxSpeed: 0.7, lead: 0.05, steerSmooth: 0.15, chaseRange: 280 },
+    medium: { accel: 1.1, maxSpeed: 1.0, lead: 0.12, steerSmooth: 0.10, chaseRange: 500 },
+    hard: { accel: 1.6, maxSpeed: 1.4, lead: 0.25, steerSmooth: 0.05, chaseRange: 1000 },
   };
   const mods = diffMap[difficulty] || diffMap.medium;
 
-  const maxSpeed = 170 * mods.maxSpeed;
-  const accel = 620 * mods.accel;
+  const maxSpeed = 190 * mods.maxSpeed;
+  const accel = 650 * mods.accel;
+  const leadFactor = mods.lead;
+  const steerSmooth = mods.steerSmooth;
+
+  const ball = world.ball;
 
   for (const player of players) {
     const teamButtons = getButtonsForPlayer(player.id);
     if (teamButtons.length === 0) continue;
 
-    const ordered = [...teamButtons].sort((a, b) => {
-      const da = Math.hypot(a.x - world.ball.x, a.y - world.ball.y);
-      const db = Math.hypot(b.x - world.ball.x, b.y - world.ball.y);
-      return da - db;
-    });
-
-    const chasers = new Set(ordered.slice(0, 1).map((b) => b.id));
+    // Encontra o botão do time mais próximo da bola para ser o "perseguidor"
+    let chaser = null;
+    let minChaserDist = Infinity;
+    
+    for (const b of teamButtons) {
+      const d = Math.hypot(b.x - ball.x, b.y - ball.y);
+      if (d < minChaserDist) {
+        minChaserDist = d;
+        chaser = b;
+      }
+    }
 
     for (const b of teamButtons) {
       const isDragged = drag.active && drag.buttonId === b.id;
       const isKeyboardSelected = gameConfig.controlMode === 'keyboard' && getKeyboardSelection(b.playerId) === b;
       const isExplicitControlled = world.controlledButtonId === b.id;
+      
       if (isDragged || isKeyboardSelected || isExplicitControlled) continue;
-      if (player.activePower?.type === 'stun' || player.activePower?.type === 'freeze') continue;
-
-      if (chasers.has(b.id)) {
-        const dx = world.ball.x - b.x;
-        const dy = world.ball.y - b.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist < 6) continue;
-
-        b.vx += (dx / dist) * accel * dt;
-        b.vy += (dy / dist) * accel * dt;
-
-        const clamped = clampMagnitude(b.vx, b.vy, maxSpeed);
-        b.vx = clamped.vx;
-        b.vy = clamped.vy;
-      } else {
-        b.applyIdleWander(dt);
+      if (player.activePower?.type === 'stun' || player.activePower?.type === 'freeze') {
+        b.vx *= 0.9; b.vy *= 0.9;
+        continue;
       }
+
+      const distToBall = Math.hypot(b.x - ball.x, b.y - ball.y);
+      const isMainChaser = b === chaser;
+
+      // Se for o perseguidor principal e a bola estiver no range, persegue
+      if (isMainChaser && distToBall < mods.chaseRange) {
+        const leadX = ball.x + ball.vx * leadFactor;
+        const leadY = ball.y + ball.vy * leadFactor;
+        let dx = leadX - b.x;
+        let dy = leadY - b.y;
+        const dist = Math.hypot(dx, dy) || 1;
+
+        dx /= dist; dy /= dist;
+
+        b.vx += dx * accel * dt * (1 - steerSmooth);
+        b.vy += dy * accel * dt * (1 - steerSmooth);
+
+        if (dist < 45) {
+          b.vx *= 0.85;
+          b.vy *= 0.85;
+        }
+      } else {
+        // Se não for o chaser ou estiver longe, tenta voltar para a posição "home" ou fica vadiando
+        const homeDx = b._home.x - b.x;
+        const homeDy = b._home.y - b.y;
+        const homeDist = Math.hypot(homeDx, homeDy);
+
+        if (homeDist > 40) {
+          // Volta devagar para o lugar
+          const pull = Math.min(accel * 0.4, homeDist * 2);
+          b.vx += (homeDx / homeDist) * pull * dt;
+          b.vy += (homeDy / homeDist) * pull * dt;
+        } else {
+          // Movimento de vadiagem (idle wander) para dar vida
+          b.applyIdleWander(dt);
+        }
+      }
+
+      const clamped = clampMagnitude(b.vx, b.vy, maxSpeed);
+      b.vx = clamped.vx;
+      b.vy = clamped.vy;
     }
   }
 }
@@ -1710,104 +2214,14 @@ function stabilizeControlledButtons(dt) {
   for (const b of world.buttons) {
     const isSelected = getKeyboardSelection(b.playerId) === b;
 
-    if (isSelected) {
-      b.isBraking = false; // Se voltou a ser selecionado, remove o freio automático
-      if (!hasMovementKeysForPlayer(b.playerId)) {
-        b.vx *= brakePower;
-        b.vy *= brakePower;
-        if (Math.abs(b.vx) < 1) b.vx = 0;
-        if (Math.abs(b.vy) < 1) b.vy = 0;
-      }
-    } else if (b.isBraking) {
-      // Botão que acabou de ser trocado continua freando suavemente igual ao selecionado
+    // Apenas freia o botão atualmente selecionado se nenhuma tecla estiver pressionada
+    if (isSelected && !hasMovementKeysForPlayer(b.playerId)) {
       b.vx *= brakePower;
       b.vy *= brakePower;
-      if (Math.hypot(b.vx, b.vy) < 10) {
-        b.isBraking = false;
-        b.vx = 0;
-        b.vy = 0;
-      }
+      if (Math.abs(b.vx) < 1) b.vx = 0;
+      if (Math.abs(b.vy) < 1) b.vy = 0;
     }
   }
-}
-
-function maybeReleaseKeyboardKick(playerId, button) {
-  if (!world || state !== 'playing') return;
-  if (keyboardShotLatch[playerId]) return;
-
-  const ball = world.ball;
-  // Margem de contato aumentada para tornar o chute de teclado muito mais confiável
-  const contactDistance = button.radius + ball.radius + 18; 
-  const dist = Math.hypot(button.x - ball.x, button.y - ball.y);
-  if (dist > contactDistance) return;
-
-  const charge = keyboardCharge[playerId];
-  if (charge < 0.04) return;
-
-  const kickPower = 320 + charge * 980;
-  let dirx = ball.x - button.x;
-  let diry = ball.y - button.y;
-  let mag = Math.hypot(dirx, diry);
-
-  if (mag < 0.001) {
-    mag = Math.hypot(button.vx, button.vy);
-    if (mag > 0.001) {
-      dirx = button.vx / mag;
-      diry = button.vy / mag;
-    } else {
-      const goalX = playerId === 0 ? FIELD.width : 0;
-      const goalY = FIELD.height / 2;
-      dirx = goalX - button.x;
-      diry = goalY - button.y;
-      mag = Math.hypot(dirx, diry) || 1;
-      dirx /= mag;
-      diry /= mag;
-    }
-  } else {
-    dirx /= mag;
-    diry /= mag;
-  }
-
-  const power = button.computeShotPower(kickPower, players[playerId]?.activePower);
-  const aim = button.applyAimAssist({ x: dirx, y: diry }, players[playerId]?.activePower);
-  ball.vx += aim.x * power;
-  ball.vy += aim.y * power;
-
-  // Trigger PowerShot
-  if (players[playerId]?.activePower?.type === 'powershot') {
-    ball.isPowerShot = true;
-    ball.lastShooterPlayerId = playerId;
-  }
-
-  ball.spin += (button.vx - button.vy) * 0.002;
-
-  // mark the shot so turn logic and shot counters behave like a normal kick
-  world.activeShotPlayerId = playerId;
-  world.shotCount = (world.shotCount || 0) + 1;
-  turnLock = true;
-  lastKeyboardShotTime[playerId] = performance.now();
-
-  if (players[playerId]?.activePower) {
-    powerUps.applyBallEffects(ball, players[playerId].activePower.type);
-    consumeKeyboardPower(players[playerId]);
-  }
-
-  if (isOnline) {
-    online.sendGameData({
-      type: 'kick',
-      buttonId: button.id,
-      power,
-      aim,
-      isPowerShot: players[playerId]?.activePower?.type === 'powershot',
-      shooterPlayerId: playerId
-    });
-  }
-
-  audio.kick(power / 1300);
-  ui.toast('CHUTE!', 320);
-  keyboardShotLatch[playerId] = true;
-  keyboardCharge[playerId] = 0;
-  keyboardChargeHeld[playerId] = false;
 }
 
 function consumeKeyboardPower(player) {
@@ -1831,16 +2245,26 @@ function performKeyboardPass(playerId, button) {
   if (!world || state !== 'playing') return;
   if (!button) return;
 
+  const now = performance.now();
+  if (now - lastKeyboardShotTime[playerId] < 120) return;
+
   const ball = world.ball;
-  const contactDistance = button.radius + ball.radius + 18;
-  const dist = Math.hypot(button.x - ball.x, button.y - ball.y);
-  if (dist > contactDistance) return;
+  if (!isBallInContact(button, ball, 6)) return;
 
   // Find teammate
   const teammates = getButtonsForPlayer(playerId).filter((b) => b.id !== button.id);
   if (teammates.length === 0) return;
 
-  const target = teammates[0]; // Pass to first teammate
+  // Passa para o companheiro mais próximo do botão que está com a bola
+  let target = teammates[0];
+  let best = Math.hypot(target.x - button.x, target.y - button.y);
+  for (const t of teammates) {
+    const d = Math.hypot(t.x - button.x, t.y - button.y);
+    if (d < best) {
+      best = d;
+      target = t;
+    }
+  }
   let dirx = target.x - button.x;
   let diry = target.y - button.y;
   const mag = Math.hypot(dirx, diry) || 1;
@@ -1848,11 +2272,14 @@ function performKeyboardPass(playerId, button) {
   diry /= mag;
 
   // Pass power (lower than shot)
-  const passPower = button.computeShotPower(150, players[playerId]?.activePower) * 0.4;
-  const aim = button.applyAimAssist({ x: dirx, y: diry }, players[playerId]?.activePower, mag, passPower);
+  const pull = clamp(best * 0.25, 90, 180);
+  const passPower = button.computeShotPower(pull, players[playerId]?.activePower) * 0.35;
+  const aim = button.applyAimAssist({ x: dirx, y: diry }, players[playerId]?.activePower, best, passPower);
   
   ball.vx += aim.x * passPower;
   ball.vy += aim.y * passPower;
+  button.vx -= aim.x * passPower * 0.04;
+  button.vy -= aim.y * passPower * 0.04;
   ball.spin += (Math.random() > 0.5 ? 1 : -1) * 0.3;
 
   world.activeShotPlayerId = playerId;
@@ -1866,6 +2293,7 @@ function performKeyboardPass(playerId, button) {
 
   audio.kick(passPower / 1300, 'pass');
   ui.toast('PASSE!', 320);
+  lastKeyboardShotTime[playerId] = now;
 }
 
 function toggleFullscreen() {
@@ -3242,7 +3670,7 @@ function gameLoop(ts) {
   const dt = Math.min(0.033, (ts - match.lastTimestamp) / 1000);
   match.lastTimestamp = ts;
 
-  update(dt);
+  update(dt, ts);
   render();
 
   rafId = requestAnimationFrame(gameLoop);

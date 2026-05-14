@@ -75,7 +75,7 @@ export class Goalie {
       targetY = clamp(targetY, gy0 + 18, gy1 - 18);
       
       // Ajuste de velocidade do goleiro: acompanha sem fechar o gol o tempo todo
-      const difficulty = config.aiDifficulty || 'normal';
+      const difficulty = config.goalieDifficulty || config.aiDifficulty || config.difficulty || 'medium';
       const speedMul = difficulty === 'easy' ? 0.82 : difficulty === 'hard' ? 1.08 : 1.0;
       const speed = 240 * speedMul;
       const tracking = clamp(1 - distanceToGoal / 460, 0.25, 1);

@@ -179,8 +179,18 @@ export class WorldPhysics {
 
     if (velAlongNormal > 0) return;
 
+    const isBallButton = allowSpin && a?.type === 'ball' && b?.type === 'button';
+    const normalSpeed = Math.abs(velAlongNormal);
+
     // Restituição variável: impactos lentos têm menos restituição (mais realista)
-    const e = Math.min(this.restitution, 0.4 + Math.abs(velAlongNormal) / 1000);
+    let e = Math.min(this.restitution, 0.4 + normalSpeed / 1000);
+    let mu = this.contactFriction;
+
+    // Mini condução (grip leve): em toques suaves bola↔botão, reduz quique e aumenta atrito
+    if (isBallButton && normalSpeed < 200) {
+      e = Math.min(e, 0.22 + normalSpeed / 1100);
+      mu *= 2.2;
+    }
     const j = (-(1 + e) * velAlongNormal) / totalInvMass;
     const ix = j * nx;
     const iy = j * ny;
@@ -198,7 +208,6 @@ export class WorldPhysics {
     const vt = rvx2 * tx + rvy2 * ty;
     
     // Fricção de Coulomb simplificada: jt não pode exceder j * mu
-    const mu = this.contactFriction;
     let jt = (-vt) / totalInvMass;
     const maxJt = Math.abs(j * mu);
     jt = clamp(jt, -maxJt, maxJt);
@@ -210,6 +219,14 @@ export class WorldPhysics {
     a.vy += tiy * a.invMass;
     b.vx -= tix * b.invMass;
     b.vy -= tiy * b.invMass;
+
+    // Leve "follow" da bola no botão em contato suave (sensação de condução)
+    if (isBallButton && normalSpeed < 220) {
+      const grip = clamp((220 - normalSpeed) / 220, 0, 1);
+      const blend = 0.08 * grip;
+      a.vx += (b.vx - a.vx) * blend;
+      a.vy += (b.vy - a.vy) * blend;
+    }
 
     if (onImpact) onImpact(this.impactAt((a.x + b.x) / 2, (a.y + b.y) / 2, Math.abs(j)));
 

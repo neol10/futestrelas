@@ -30,7 +30,10 @@ export function createInitialConfig() {
     goalieAuto: true,
     gameSpeed: 1,
     soundEnabled: true,
-    difficulty: 'medium', // easy | medium | hard
+    difficulty: 'medium', // legacy fallback: easy | medium | hard
+    botDifficulty: 'medium',
+    goalieDifficulty: 'medium',
+    botsPerTeam: '3', // 1-10 bots per team
     weatherMode: 'clear',  // clear | rain | snow | wind | storm
   };
 }
