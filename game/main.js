@@ -538,8 +538,8 @@ function setupWorld() {
   world.goalies.push(new Goalie({ side: 'right', auto: gameConfig.goalieAuto }));
 
   const formations = createFormation();
-  for (const b of formations.p1) world.buttons.push(new Button({ ...b, playerId: 0, colors: p1Colors, team: TEAM_FLAGS[selections.p1Team], stats: p1Stats }));
-  for (const b of formations.p2) world.buttons.push(new Button({ ...b, playerId: 1, colors: p2Colors, team: TEAM_FLAGS[selections.p2Team], stats: p2Stats }));
+  for (const b of formations.p1) world.buttons.push(new Button({ ...b, playerId: 0, colors: p1Colors, team: TEAM_FLAGS[selections.p1Team], teamName: selections.p1Team, stats: p1Stats }));
+  for (const b of formations.p2) world.buttons.push(new Button({ ...b, playerId: 1, colors: p2Colors, team: TEAM_FLAGS[selections.p2Team], teamName: selections.p2Team, stats: p2Stats }));
 
   physics = new WorldPhysics({ field: FIELD });
   powerUps = new PowerUpSystem({ field: FIELD });

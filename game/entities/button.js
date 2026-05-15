@@ -94,13 +94,50 @@ export class Button {
     this.dashTimer = 0;
 
     this._home = { x, y };
-    // Sprite procedural do jogador (fallback sem precisar de imagens externas)
-    try {
-      this.playerSprite = createPlayerSprite(this.colors, this.id);
-      this.spriteFrameW = this.playerSprite.width / 3;
-      this.spriteFrameH = this.playerSprite.height;
-    } catch (e) {
-      this.playerSprite = null;
+    // Tenta carregar sprite externo por time (game/assets/players/<team>.png)
+    this.playerSprite = null;
+    this.spriteFrameW = 0;
+    this.spriteFrameH = 0;
+    this.spriteFrames = 3;
+    if (this.teamName) {
+      try {
+        const slug = String(this.teamName).toLowerCase().replace(/[^a-z0-9]+/g, '_');
+        const img = new Image();
+        img.src = `game/assets/players/${slug}.png`;
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          // assume sprite-sheet horizontal with `spriteFrames` frames
+          this.playerSprite = img;
+          this.spriteFrameW = Math.floor(img.naturalWidth / this.spriteFrames);
+          this.spriteFrameH = img.naturalHeight;
+        };
+        img.onerror = () => {
+          // fallback procedural
+          try {
+            this.playerSprite = createPlayerSprite(this.colors, this.id);
+            this.spriteFrameW = this.playerSprite.width / 3;
+            this.spriteFrameH = this.playerSprite.height;
+          } catch (e) {
+            this.playerSprite = null;
+          }
+        };
+      } catch (e) {
+        try {
+          this.playerSprite = createPlayerSprite(this.colors, this.id);
+          this.spriteFrameW = this.playerSprite.width / 3;
+          this.spriteFrameH = this.playerSprite.height;
+        } catch (ex) {
+          this.playerSprite = null;
+        }
+      }
+    } else {
+      try {
+        this.playerSprite = createPlayerSprite(this.colors, this.id);
+        this.spriteFrameW = this.playerSprite.width / 3;
+        this.spriteFrameH = this.playerSprite.height;
+      } catch (e) {
+        this.playerSprite = null;
+      }
     }
   }
 
