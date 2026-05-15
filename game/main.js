@@ -194,9 +194,18 @@ let lastOnlineSyncTs = 0;
 
 function isBallInContact(button, ball, extra = 0) {
   if (!button || !ball) return false;
+  if (ball.carriedByButtonId === button.id) return true;
   const contactDistance = button.radius + ball.radius + 18 + extra;
   const dist = Math.hypot(button.x - ball.x, button.y - ball.y);
   return dist <= contactDistance;
+}
+
+function releaseCarriedBallForButton(button, ball) {
+  if (!button || !ball) return;
+  if (ball.carriedByButtonId !== button.id) return;
+  ball.carriedByButtonId = null;
+  ball.carryOffsetX = 0;
+  ball.carryOffsetY = 0;
 }
 
 function bufferKickAction(playerId, kind, charge = 0) {
@@ -262,6 +271,7 @@ function executeKeyboardKick(playerId, button, charge) {
   if (!isBallInContact(button, world.ball, 6)) return;
 
   const ball = world.ball;
+  releaseCarriedBallForButton(button, ball);
   const usedCharge = clamp(charge, 0, 1);
   const kickPower = 320 + usedCharge * 980;
 
@@ -917,6 +927,12 @@ canvas.addEventListener('pointerup', () => {
   b.ownerPower = players[currentPlayerIndex]?.activePower ?? null;
 
   const impulse = { x: dirx * power, y: diry * power };
+
+  if (world.ball?.carriedByButtonId === b.id) {
+    world.ball.carriedByButtonId = null;
+    world.ball.carryOffsetX = 0;
+    world.ball.carryOffsetY = 0;
+  }
 
   b.vx += impulse.x;
   b.vy += impulse.y;
@@ -2464,6 +2480,7 @@ function performKeyboardPass(playerId, button) {
   if (now - lastKeyboardShotTime[playerId] < 120) return;
 
   const ball = world.ball;
+  releaseCarriedBallForButton(button, ball);
   if (!isBallInContact(button, ball, 6)) return;
 
   // Find teammate
