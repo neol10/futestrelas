@@ -2058,7 +2058,7 @@ function updateCautiousBotTouches(dt) {
 
     const difficulty = gameConfig.botDifficulty || gameConfig.difficulty || 'medium';
     const decisionCooldowns = { easy: 650, medium: 500, hard: 380 };
-    const dribbleCooldowns = { easy: 170, medium: 130, hard: 95 };
+    const dribbleCooldowns = { easy: 200, medium: 160, hard: 120 };
     if (now - (button.botActionAt || 0) < (decisionCooldowns[difficulty] || 500)) continue;
     if (now - (button.botDribbleAt || 0) < (dribbleCooldowns[difficulty] || 130)) continue;
 
@@ -2084,6 +2084,9 @@ function updateCautiousBotTouches(dt) {
     const targetAhead = teammates.find((candidate) => (attackDir === 1 ? candidate.x > button.x : candidate.x < button.x));
 
     // EASY: mini-condução — leva a bola suavemente em direção ao gol adversario, bot persegue
+    // Se touch recente, prioriza drible e evita passes de primeira
+    const justTouched = now - (button.lastShotAt || 0) < 800;
+
     if (difficulty === 'easy') {
       const shouldShoot = toGoalDist < 180;
       if (shouldShoot) {
@@ -2097,6 +2100,7 @@ function updateCautiousBotTouches(dt) {
         button.botActionAt = now;
         button.lastShotAt = now;
         button.botDribbleAt = now;
+        button.repositionBlockedUntil = now + 1400;
         if (world.effects) {
           world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.20, radius: 11, life: 0.15, maxLife: 0.15, color: player.colors?.[0] });
         }
@@ -2111,6 +2115,7 @@ function updateCautiousBotTouches(dt) {
       button.botActionAt = now;
       button.lastShotAt = now;
       button.botDribbleAt = now;
+      button.repositionBlockedUntil = now + 1200;
       if (world.effects) {
         world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.20, radius: 11, life: 0.15, maxLife: 0.15, color: player.colors?.[0] });
       }
@@ -2120,7 +2125,8 @@ function updateCautiousBotTouches(dt) {
 
     // MEDIUM: toca a bola — prefere passes curtos para companheiros ou empurra gentilmente ao gol
     if (difficulty === 'medium') {
-      const passChance = targetAhead ? 0.68 : 0.42;
+      // reduz chance de passe imediato se acabou de tocar
+      const passChance = targetAhead ? (justTouched ? 0.38 : 0.68) : (justTouched ? 0.22 : 0.42);
       const shouldShoot = toGoalDist < 220 && Math.random() < 0.45;
 
       if (shouldShoot) {
@@ -2136,6 +2142,7 @@ function updateCautiousBotTouches(dt) {
         button.botActionAt = now;
         button.lastShotAt = now;
         button.botDribbleAt = now;
+        button.repositionBlockedUntil = now + 1400;
         if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.26, radius: 13, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
         audio.kick(gPower / 1300, 'shoot');
         continue;
@@ -2166,6 +2173,7 @@ function updateCautiousBotTouches(dt) {
         button.botActionAt = now;
         button.lastShotAt = now;
         button.botDribbleAt = now;
+        button.repositionBlockedUntil = now + 1400;
         if (world.effects) world.effects.impacts.push({ x: (button.x + target.x) / 2, y: (button.y + target.y) / 2, strength: 0.25, radius: 13, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
         audio.kick(power / 1300, 'pass');
         continue;
@@ -2184,6 +2192,7 @@ function updateCautiousBotTouches(dt) {
       button.botActionAt = now;
       button.lastShotAt = now;
       button.botDribbleAt = now;
+      button.repositionBlockedUntil = now + 900;
       if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.26, radius: 13, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
       audio.kick(gPower / 1300, 'touch');
       continue;
@@ -2216,6 +2225,7 @@ function updateCautiousBotTouches(dt) {
         button.vy += aim.y * power * 0.12;
         button.botActionAt = now;
         button.lastShotAt = now;
+        button.repositionBlockedUntil = now + 1600;
         if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.38, radius: 15, life: 0.18, maxLife: 0.18, color: player.colors?.[0] });
         if (player.activePower?.type === 'powershot') { ball.isPowerShot = true; ball.lastShooterPlayerId = player.id; }
         audio.kick(power / 1300, 'shoot');
@@ -2235,6 +2245,7 @@ function updateCautiousBotTouches(dt) {
         button.vy += aim.y * power * 0.10;
         button.botActionAt = now;
         button.lastShotAt = now;
+        button.repositionBlockedUntil = now + 1400;
         if (world.effects) world.effects.impacts.push({ x: (button.x + striker.x) / 2, y: (button.y + striker.y) / 2, strength: 0.34, radius: 15, life: 0.18, maxLife: 0.18, color: player.colors?.[0] });
         audio.kick(power / 1300, 'pass');
         continue;
@@ -2252,6 +2263,7 @@ function updateCautiousBotTouches(dt) {
       button.vy += aim.y * power * 0.07;
       button.botActionAt = now;
       button.lastShotAt = now;
+      button.repositionBlockedUntil = now + 1100;
       if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.30, radius: 14, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
       audio.kick(power / 1300, 'push');
       continue;
@@ -2334,7 +2346,10 @@ function updateBotMovement(dt, botDifficulty) {
         const supportX = clamp(ball.x + attackDir * 150, 70, FIELD.width - 70);
         const supportY = clamp(ball.y + laneOffset, 60, FIELD.height - 60);
         const onOwnSide = player.id === 0 ? ball.x < FIELD.width * 0.55 : ball.x > FIELD.width * 0.45;
-        const tacticalBlend = onOwnSide ? clamp((distToBall - 120) / 360, 0.10, 0.72) : 0.08;
+        const now = performance.now();
+        let tacticalBlend = onOwnSide ? clamp((distToBall - 120) / 360, 0.10, 0.72) : 0.08;
+        // Se o bot acabou de agir, evita voltar ao home imediatamente
+        if (now < (b.repositionBlockedUntil || 0)) tacticalBlend = 0.02;
         const targetX = b._home.x * tacticalBlend + supportX * (1 - tacticalBlend);
         const targetY = b._home.y * tacticalBlend + supportY * (1 - tacticalBlend);
         const targetDx = targetX - b.x;
