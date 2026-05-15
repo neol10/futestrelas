@@ -1582,7 +1582,9 @@ function update(dt, ts) {
     dt = effectiveDt;
 
   if (state === 'playing') {
-    if (gameConfig.controlMode === 'keyboard') {
+    // Teclado sempre fica disponível como fallback, mesmo no modo drag.
+    // Isso evita a sensação de "não consigo controlar" quando a partida inicia em arrastar e soltar.
+    if (gameConfig.controlMode === 'keyboard' || keyboardInput.keysDown.size > 0 || keyboardChargeHeld[0] || keyboardChargeHeld[1] || keyboardPassHeld[0] || keyboardPassHeld[1]) {
       updateKeyboardControls(dt);
     }
 
