@@ -139,6 +139,8 @@ const KEYBOARD_SHOT_THRESHOLD_MS = 220;
 const KICK_ACTION_BUFFER_MS = 260;
 const MIN_SHOOT_CHARGE = 0.12; // evita chute acidental com micro-toque
 const ONLINE_SYNC_INTERVAL_MS = 50; // Equilíbrio ideal para estabilidade em redes variadas
+// Ajuste rápido de sensibilidade de teclado (1.0 = padrão)
+const KEYBOARD_SENS = 1.0;
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -1986,15 +1988,27 @@ function updateKeyboardControls(dt) {
     const dx = (right - left) * mult;
     const dy = (down - up) * mult;
     
-    if (dx !== 0 || dy !== 0) {
-      const accel = 6800; 
-      button.vx += dx * accel * dt;
-      button.vy += dy * accel * dt;
+    // Deadzone and smooth keyboard movement
+    const inputMag = Math.hypot(dx, dy);
+    const deadzone = 0.15; // tiny guard vs micro-taps
+    if (inputMag > deadzone) {
+      const nx = dx / inputMag;
+      const ny = dy / inputMag;
+      const accel = 2200 * KEYBOARD_SENS; // tuned acceleration
+      button.vx += nx * accel * dt;
+      button.vy += ny * accel * dt;
 
-      const maxSpeed = 880;
+      const maxSpeed = 560 * KEYBOARD_SENS; // tuned max speed
       const clamped = clampMagnitude(button.vx, button.vy, maxSpeed);
       button.vx = clamped.vx;
       button.vy = clamped.vy;
+    } else {
+      // Smooth braking when no keyboard input
+      const brakePower = Math.pow(0.78, dt * 60);
+      button.vx *= brakePower;
+      button.vy *= brakePower;
+      if (Math.abs(button.vx) < 0.5) button.vx = 0;
+      if (Math.abs(button.vy) < 0.5) button.vy = 0;
     }
 
     // Lógica de Chute INDEPENDENTE para cada player
