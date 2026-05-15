@@ -2325,10 +2325,11 @@ function updateBotMovement(dt, botDifficulty) {
         // Em vez de voltar sempre para o ponto inicial, ocupa uma posição de apoio
         // que acompanha a jogada e preserva a formação.
         const attackDir = player.id === 0 ? 1 : -1;
-        const laneOffset = (b._home.y - FIELD.height / 2) * 0.35;
-        const supportX = clamp(ball.x + attackDir * 120, 80, FIELD.width - 80);
-        const supportY = clamp(ball.y + laneOffset, 70, FIELD.height - 70);
-        const tacticalBlend = clamp((distToBall - 120) / 420, 0.18, 0.82);
+        const laneOffset = (b._home.y - FIELD.height / 2) * 0.32;
+        const supportX = clamp(ball.x + attackDir * 150, 70, FIELD.width - 70);
+        const supportY = clamp(ball.y + laneOffset, 60, FIELD.height - 60);
+        const onOwnSide = player.id === 0 ? ball.x < FIELD.width * 0.55 : ball.x > FIELD.width * 0.45;
+        const tacticalBlend = onOwnSide ? clamp((distToBall - 120) / 360, 0.10, 0.72) : 0.08;
         const targetX = b._home.x * tacticalBlend + supportX * (1 - tacticalBlend);
         const targetY = b._home.y * tacticalBlend + supportY * (1 - tacticalBlend);
         const targetDx = targetX - b.x;
@@ -2336,7 +2337,7 @@ function updateBotMovement(dt, botDifficulty) {
         const targetDist = Math.hypot(targetDx, targetDy);
 
         if (targetDist > 16) {
-          const pull = Math.min(accel * 0.38, targetDist * 1.8);
+          const pull = Math.min(accel * 0.44, targetDist * 2.2);
           b.vx += (targetDx / targetDist) * pull * dt;
           b.vy += (targetDy / targetDist) * pull * dt;
         } else {

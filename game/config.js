@@ -24,7 +24,7 @@ export function createInitialConfig() {
     matchTime: '60',
     maxGoals: '3',
     controlMode: 'drag',
-    dribbleAssist: false,
+    dribbleAssist: true,
     powerUpsEnabled: true,
     powerSpawnInterval: 6,
     powerDuration: 8,

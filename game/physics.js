@@ -188,8 +188,8 @@ export class WorldPhysics {
 
     // Mini condução (grip leve): em toques suaves bola↔botão, reduz quique e aumenta atrito
     const dribbleAssist = !!config?.dribbleAssist;
-    if (isBallButton && normalSpeed < 200) {
-      const gripBoost = dribbleAssist ? 1.9 : 1;
+    if (isBallButton && normalSpeed < 180) {
+      const gripBoost = dribbleAssist ? 2.5 : 1;
       e = Math.min(e, 0.22 + normalSpeed / 1100);
       mu *= 2.2 * gripBoost;
     }
@@ -223,11 +223,20 @@ export class WorldPhysics {
     b.vy -= tiy * b.invMass;
 
     // Leve "follow" da bola no botão em contato suave (sensação de condução)
-    if (isBallButton && normalSpeed < 220) {
+    if (isBallButton && normalSpeed < 180) {
       const grip = clamp((220 - normalSpeed) / 220, 0, 1);
-      const blend = (dribbleAssist ? 0.15 : 0.08) * grip;
+      const blend = (dribbleAssist ? 0.24 : 0.08) * grip;
       a.vx += (b.vx - a.vx) * blend;
       a.vy += (b.vy - a.vy) * blend;
+    }
+
+    // Em combate forte, a bola deve escapar do botão em vez de colar.
+    if (isBallButton && normalSpeed > 260) {
+      const breakup = clamp((normalSpeed - 260) / 320, 0, 1);
+      a.vx += nx * j * 0.16 * breakup;
+      a.vy += ny * j * 0.16 * breakup;
+      b.vx -= nx * j * 0.08 * breakup;
+      b.vy -= ny * j * 0.08 * breakup;
     }
 
     if (onImpact) onImpact(this.impactAt((a.x + b.x) / 2, (a.y + b.y) / 2, Math.abs(j)));
