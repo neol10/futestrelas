@@ -21,8 +21,8 @@ import * as online from './online.js';
 })();
 
 const FIELD = {
-  width: 1280,
-  height: 720,
+  width: 1200,
+  height: 680,
   wall: 18,
   goalWidth: 170,
   goalDepth: 26,
@@ -95,8 +95,8 @@ function prerenderField() {
   // 3. TEXTURA DE GRAMA (Fibras Cheadas)
   fctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
   fctx.lineWidth = 0.5;
-  for (let x = 0; x < FIELD.width; x += 12) {
-    for (let y = 0; y < FIELD.height; y += 12) {
+  for (let x = 0; x < FIELD.width; x += 18) {
+    for (let y = 0; y < FIELD.height; y += 18) {
       fctx.beginPath();
       fctx.moveTo(x + Math.sin(y) * 3, y);
       fctx.lineTo(x + Math.sin(y) * 3, y + 4);
@@ -121,8 +121,8 @@ function prerenderField() {
   fctx.stroke();
 
   // Áreas
-  fctx.strokeRect(10, FIELD.height / 2 - 120, 100, 240); // Esquerda
-  fctx.strokeRect(FIELD.width - 110, FIELD.height / 2 - 120, 100, 240); // Direita
+  fctx.strokeRect(10, FIELD.height / 2 - 110, 100, 220); // Esquerda
+  fctx.strokeRect(FIELD.width - 110, FIELD.height / 2 - 110, 100, 220); // Direita
 }
 const TEAM_STATS = {
   Brasil: { curve: 1.0, power: 1.0, mass: 1.0, speed: 1.0 },
@@ -3710,7 +3710,7 @@ class WeatherSystem {
   }
 
   update(dt, mode) {
-    const maxCount = { rain: 180, snow: 120, wind: 90, storm: 250, clear: 0 }[mode] ?? 0;
+    const maxCount = { rain: 120, snow: 80, wind: 70, storm: 160, clear: 0 }[mode] ?? 0;
 
     // Spawn partículas conforme o clima
     if (this.particles.length < maxCount) {
