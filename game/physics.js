@@ -63,7 +63,7 @@ export class WorldPhysics {
 
     // ball-button
     for (const b of world.buttons) {
-      this.resolveCircleCollision(world.ball, b, { allowSpin: true, world }, onImpact);
+      this.resolveCircleCollision(world.ball, b, { allowSpin: true, world, config }, onImpact);
     }
 
     // ball-goalie + button-goalie
@@ -135,7 +135,7 @@ export class WorldPhysics {
     }
   }
 
-  resolveCircleCollision(a, b, { allowSpin, world }, onImpact) {
+  resolveCircleCollision(a, b, { allowSpin, world, config }, onImpact) {
     // PowerShot: Atravessa advers\u00e1rios
     if (a?.type === 'ball' && a.isPowerShot && b?.type === 'button') {
       const shooterPlayerId = a.lastShooterPlayerId;
@@ -187,9 +187,11 @@ export class WorldPhysics {
     let mu = this.contactFriction;
 
     // Mini condução (grip leve): em toques suaves bola↔botão, reduz quique e aumenta atrito
+    const dribbleAssist = !!config?.dribbleAssist;
     if (isBallButton && normalSpeed < 200) {
+      const gripBoost = dribbleAssist ? 1.9 : 1;
       e = Math.min(e, 0.22 + normalSpeed / 1100);
-      mu *= 2.2;
+      mu *= 2.2 * gripBoost;
     }
     const j = (-(1 + e) * velAlongNormal) / totalInvMass;
     const ix = j * nx;
@@ -223,7 +225,7 @@ export class WorldPhysics {
     // Leve "follow" da bola no botão em contato suave (sensação de condução)
     if (isBallButton && normalSpeed < 220) {
       const grip = clamp((220 - normalSpeed) / 220, 0, 1);
-      const blend = 0.08 * grip;
+      const blend = (dribbleAssist ? 0.15 : 0.08) * grip;
       a.vx += (b.vx - a.vx) * blend;
       a.vy += (b.vy - a.vy) * blend;
     }
