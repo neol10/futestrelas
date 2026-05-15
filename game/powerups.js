@@ -14,15 +14,20 @@ const POWER_TYPES = [
 
 const POWER_DURATIONS = {
   precision: 6,
-  boost: 5,
-  shield: 5,
+  boost: 6,
+  shield: 6,
   block: 5,
-  teleport: 4,
-  spinner: 4,
-  smoke: 5,
-  blur: 4,
-  drain: 5,
-  confuse: 4,
+  teleport: 4.5,
+  spinner: 5,
+  smoke: 5.5,
+  blur: 4.5,
+  drain: 6,
+  confuse: 5,
+  slow: 6,
+  magnet: 6,
+  dash: 4.5,
+  gravity: 5.5,
+  shockwave: 4,
 };
 
 const POWER_COLORS = {
@@ -214,7 +219,7 @@ export class PowerUpSystem {
       }
     }
 
-    const range = 260;
+    const range = 320;
     if (best > range) return;
 
     const dx = target.x - ball.x;
@@ -223,7 +228,7 @@ export class PowerUpSystem {
     const nx = dx / d;
     const ny = dy / d;
 
-    const strength = 220; // aceleração
+    const strength = 320; // aceleração
     ball.vx += nx * strength * dt;
     ball.vy += ny * strength * dt;
   }
@@ -232,8 +237,8 @@ export class PowerUpSystem {
     const source = this.getPrimaryButton(world, playerId);
     if (!source) return;
 
-    const range = 320;
-    const strength = 320;
+    const range = 380;
+    const strength = 420;
     const falloff = 1 - Math.min(1, Math.hypot(world.ball.x - source.x, world.ball.y - source.y) / range);
 
     const pullEntity = (entity, boost = 1) => {
@@ -250,7 +255,7 @@ export class PowerUpSystem {
     pullEntity(world.ball, 1.15);
     for (const b of world.buttons) {
       if (b.id === source.id) continue;
-      pullEntity(b, b.playerId === playerId ? 0.95 : 0.55);
+      pullEntity(b, b.playerId === playerId ? 1.0 : 0.65);
     }
 
     world.effects?.impacts?.push({
@@ -268,8 +273,8 @@ export class PowerUpSystem {
     const source = this.getPrimaryButton(world, playerId);
     if (!source) return;
 
-    const radius = 180;
-    const force = 680;
+    const radius = 220;
+    const force = 820;
 
     const blast = (entity, scale = 1) => {
       const dx = entity.x - source.x;
@@ -324,9 +329,15 @@ export class PowerUpSystem {
     
     // Efeitos que duram no tempo
     if (powerType === 'freeze') {
-      ball.frozenTime = 1.2; 
+      ball.frozenTime = 1.5; 
       ball.vx *= 0.1;
       ball.vy *= 0.1;
+    }
+
+    if (powerType === 'boost') {
+      ball.vx *= 1.15;
+      ball.vy *= 1.15;
+      ball.activeEffects.boost = true;
     }
     
     if (powerType === 'spinner') {
@@ -336,19 +347,40 @@ export class PowerUpSystem {
     
     if (powerType === 'curve') {
       ball.spin = (Math.random() > 0.5 ? 1 : -1) * 5;
+      ball.powerMods.curveSpinMult = 2.0;
     }
 
     if (powerType === 'lightning') {
-       ball.activeEffects.lightning = true;
+      ball.activeEffects.lightning = true;
+      ball.vx *= 1.14;
+      ball.vy *= 1.14;
+      ball.spin += (Math.random() > 0.5 ? 1 : -1) * 4;
+    }
+
+    if (powerType === 'teleport') {
+      const speed = Math.hypot(ball.vx, ball.vy);
+      if (speed > 1) {
+        const nx = ball.vx / speed;
+        const ny = ball.vy / speed;
+        ball.x += nx * 28;
+        ball.y += ny * 28;
+        ball.vx *= 1.04;
+        ball.vy *= 1.04;
+      }
+      ball.activeEffects.teleport = true;
     }
 
     if (powerType === 'dash') {
       ball.spin *= 0.9;
+      ball.vx *= 1.1;
+      ball.vy *= 1.1;
       ball.activeEffects.dash = true;
     }
 
     if (powerType === 'gravity') {
       ball.activeEffects.gravity = true;
+      ball.powerMods.curveSpinMult = 1.7;
+      ball.spin *= 1.05;
     }
   }
 

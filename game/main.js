@@ -2057,10 +2057,10 @@ function updateCautiousBotTouches(dt) {
     if (!primaryToucher || primaryToucher.button.id !== button.id) continue;
 
     const difficulty = gameConfig.botDifficulty || gameConfig.difficulty || 'medium';
-    const cooldowns = { easy: 900, medium: 600, hard: 420 };
-    const touchCooldowns = { easy: 720, medium: 520, hard: 360 };
-    if (now - (button.botActionAt || 0) < (cooldowns[difficulty] || 600)) continue;
-    if (now - (button.lastShotAt || 0) < (touchCooldowns[difficulty] || 520)) continue;
+    const decisionCooldowns = { easy: 650, medium: 500, hard: 380 };
+    const dribbleCooldowns = { easy: 170, medium: 130, hard: 95 };
+    if (now - (button.botActionAt || 0) < (decisionCooldowns[difficulty] || 500)) continue;
+    if (now - (button.botDribbleAt || 0) < (dribbleCooldowns[difficulty] || 130)) continue;
 
     const dx = ball.x - button.x;
     const dy = ball.y - button.y;
@@ -2096,6 +2096,7 @@ function updateCautiousBotTouches(dt) {
         button.vy += diry * 110 * dt;
         button.botActionAt = now;
         button.lastShotAt = now;
+        button.botDribbleAt = now;
         if (world.effects) {
           world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.20, radius: 11, life: 0.15, maxLife: 0.15, color: player.colors?.[0] });
         }
@@ -2109,6 +2110,7 @@ function updateCautiousBotTouches(dt) {
       button.vy += carryAim.y * 85 * dt;
       button.botActionAt = now;
       button.lastShotAt = now;
+      button.botDribbleAt = now;
       if (world.effects) {
         world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.20, radius: 11, life: 0.15, maxLife: 0.15, color: player.colors?.[0] });
       }
@@ -2133,6 +2135,7 @@ function updateCautiousBotTouches(dt) {
         button.vy += aimG.y * gPower * 0.09;
         button.botActionAt = now;
         button.lastShotAt = now;
+        button.botDribbleAt = now;
         if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.26, radius: 13, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
         audio.kick(gPower / 1300, 'shoot');
         continue;
@@ -2162,6 +2165,7 @@ function updateCautiousBotTouches(dt) {
         button.vy += aim.y * power * 0.08;
         button.botActionAt = now;
         button.lastShotAt = now;
+        button.botDribbleAt = now;
         if (world.effects) world.effects.impacts.push({ x: (button.x + target.x) / 2, y: (button.y + target.y) / 2, strength: 0.25, radius: 13, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
         audio.kick(power / 1300, 'pass');
         continue;
@@ -2179,6 +2183,7 @@ function updateCautiousBotTouches(dt) {
       button.vy += aimG.y * gPower * 0.05;
       button.botActionAt = now;
       button.lastShotAt = now;
+      button.botDribbleAt = now;
       if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.26, radius: 13, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
       audio.kick(gPower / 1300, 'touch');
       continue;
@@ -2511,30 +2516,30 @@ function powerLabel(type) {
 function powerTip(type) {
   const tips = {
     superShot: 'chute muito mais forte',
-    curve: 'bola faz curva',
-    magnet: 'puxa a bola',
-    slow: 'tempo mais lento',
-    precision: 'mira perfeita',
-    shield: 'fica mais pesado',
-    boost: 'mais velocidade',
-    dash: 'arrancada rapida',
-    freeze: 'congela a bola',
-    teleport: 'impacto teleport',
+    curve: 'bola faz curva mais pesada',
+    magnet: 'puxa a bola para você',
+    slow: 'deixa tudo em câmera lenta',
+    precision: 'mira mais precisa',
+    shield: 'fica mais resistente',
+    boost: 'mais velocidade e aceleração',
+    dash: 'arrancada explosiva',
+    freeze: 'congela a bola por um instante',
+    teleport: 'teleporte curto na direção do chute',
     split: 'ganha chutes extras',
     block: 'mais peso e bloqueio',
-    spinner: 'gira e curva forte',
-    smoke: 'reduz precisao',
-    lightning: 'impacto eletrico',
-    void: 'anula poder adversario',
-    gravity: 'puxa objetos',
-    shockwave: 'empurra ao redor',
-    webSlowdown: 'desacelera adversario',
-    reverse: 'inverte controles',
-    blur: 'mira ruim',
-    stun: 'paralisa',
-    drain: 'tira energia',
+    spinner: 'gira e curva mais forte',
+    smoke: 'reduz a precisão',
+    lightning: 'impulso elétrico no chute',
+    void: 'anula o poder adversário',
+    gravity: 'puxa objetos e a bola',
+    shockwave: 'empurra tudo ao redor',
+    webSlowdown: 'desacelera o adversário',
+    reverse: 'inverte os controles',
+    blur: 'deixa a mira ruim',
+    stun: 'paralisa por um instante',
+    drain: 'tira energia do adversário',
     swamp: 'pesa os movimentos',
-    zap: 'choque leve',
+    zap: 'choque leve de controle',
     confuse: 'controle confuso',
   };
   return tips[type] || '';

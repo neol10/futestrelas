@@ -22,6 +22,7 @@ export class Button {
     this.team = team; // Armazena o time para mostrar a bandeira
     this.lastShotAt = 0;
     this.botActionAt = 0;
+    this.botDribbleAt = 0;
     this.ownerPower = null;
     this.wanderTimer = rand(0.08, 0.6);
     this.wanderDrift = rand(0, Math.PI * 2);
@@ -222,6 +223,7 @@ export class Button {
     this.vy = 0;
     this.ownerPower = null;
     this.botActionAt = 0;
+    this.botDribbleAt = 0;
     this.trail = [];
   }
 
