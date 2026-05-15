@@ -190,9 +190,9 @@ export class WorldPhysics {
     const dribbleModeRaw = config?.dribbleMode || 'pesada';
     const dribbleMode = ({ heavy: 'pesada', balanced: 'equilibrada', loose: 'solta' }[dribbleModeRaw] || dribbleModeRaw);
     const dribbleProfiles = {
-      solta: { maxContactSpeed: 130, gripBoost: 0.8, blend: 0.05, breakup: 0.26 },
-      equilibrada: { maxContactSpeed: 160, gripBoost: 1.4, blend: 0.11, breakup: 0.20 },
-      pesada: { maxContactSpeed: 190, gripBoost: 2.2, blend: 0.22, breakup: 0.12 },
+      solta: { maxContactSpeed: 120, gripBoost: 0.75, blend: 0.04, breakup: 0.30 },
+      equilibrada: { maxContactSpeed: 155, gripBoost: 1.35, blend: 0.10, breakup: 0.22 },
+      pesada: { maxContactSpeed: 210, gripBoost: 3.0, blend: 0.30, breakup: 0.08 },
     };
     const dribble = dribbleProfiles[dribbleMode] || dribbleProfiles.pesada;
     if (isBallButton && normalSpeed < dribble.maxContactSpeed) {
@@ -234,6 +234,9 @@ export class WorldPhysics {
       const blend = dribble.blend * grip;
       a.vx += (b.vx - a.vx) * blend;
       a.vy += (b.vy - a.vy) * blend;
+      const carry = clamp(Math.hypot(b.vx, b.vy) / 260, 0, 1);
+      a.vx += b.vx * 0.05 * carry;
+      a.vy += b.vy * 0.05 * carry;
     }
 
     // Em combate forte, a bola deve escapar do botão em vez de colar.
