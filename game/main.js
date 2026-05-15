@@ -1731,6 +1731,31 @@ function update(dt, ts) {
     });
 
     try {
+      // Evita que um jogador carregando a bola simplesmente a leve para dentro do gol
+      const ball = world.ball;
+      if (ball && ball.carriedByButtonId != null) {
+        const carrier = world.buttons.find(b => b.id === ball.carriedByButtonId);
+        if (carrier) {
+          const gy0 = (FIELD.height - FIELD.goalWidth) / 2;
+          const gy1 = gy0 + FIELD.goalWidth;
+          const leftGoalX = FIELD.goalDepth + FIELD.wall + 12;
+          const rightGoalX = FIELD.width - FIELD.goalDepth - FIELD.wall - 12;
+          const inGoalY = ball.y >= gy0 && ball.y <= gy1;
+          const enteringLeft = carrier.x < leftGoalX - 6;
+          const enteringRight = carrier.x > rightGoalX + 6;
+          if (inGoalY && (enteringLeft || enteringRight)) {
+            // solta a bola e aplica um pequeno impulso para fora do gol
+            ball.carriedByButtonId = null;
+            const push = enteringLeft ? 160 : -160;
+            ball.vx = (carrier.vx * 0.7) + push;
+            ball.vy = carrier.vy * 0.9;
+            if (world.effects) world.effects.impacts.push({ x: ball.x, y: ball.y, strength: 0.26, radius: 12, life: 0.14, maxLife: 0.14 });
+            // evita que o mesmo botão reabra a posse imediatamente
+            carrier.botDribbleAt = performance.now();
+          }
+        }
+      }
+
       const goal = physics.checkGoal(world);
       if (goal) {
         // Reseta o PowerShot ao marcar gol
