@@ -508,18 +508,9 @@ export class Button {
   }
 
   renderPlayerInfo(ctx) {
-    const isSelected = true; 
     const t = performance.now() / 1000;
     
     ctx.save();
-    
-    // Efeito de brilho pulsante se estiver no modo teclado (foco)
-    const pulse = Math.sin(t * 8) * 0.5 + 0.5;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.radius + 2 + pulse * 3, 0, Math.PI * 2);
-    ctx.strokeStyle = this.playerId === 0 ? `rgba(0, 168, 255, ${0.3 + pulse * 0.2})` : `rgba(255, 59, 48, ${0.3 + pulse * 0.2})`;
-    ctx.lineWidth = 3;
-    ctx.stroke();
 
     // Label J1/J2
     ctx.font = 'bold 12px "Outfit", "Inter", sans-serif';
