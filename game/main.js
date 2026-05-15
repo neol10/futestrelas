@@ -2042,57 +2042,114 @@ function updateCautiousBotTouches(dt) {
     const player = players[button.playerId];
     if (!player) continue;
 
+    const teamButtons = getButtonsForPlayer(button.playerId);
+    const primaryToucher = teamButtons.reduce((best, candidate) => {
+      const candidateDist = Math.hypot(candidate.x - ball.x, candidate.y - ball.y);
+      if (!best || candidateDist < best.dist) return { button: candidate, dist: candidateDist };
+      return best;
+    }, null);
+
     const isDragged = drag.active && drag.buttonId === button.id;
     const isKeyboardSelected = gameConfig.controlMode === 'keyboard' && getKeyboardSelection(button.playerId) === button;
     if (isDragged || isKeyboardSelected) continue;
     if (player.activePower?.type === 'stun' || player.activePower?.type === 'freeze') continue;
 
+    if (!primaryToucher || primaryToucher.button.id !== button.id) continue;
+
     const difficulty = gameConfig.botDifficulty || gameConfig.difficulty || 'medium';
     const cooldowns = { easy: 900, medium: 600, hard: 420 };
+    const touchCooldowns = { easy: 720, medium: 520, hard: 360 };
     if (now - (button.botActionAt || 0) < (cooldowns[difficulty] || 600)) continue;
+    if (now - (button.lastShotAt || 0) < (touchCooldowns[difficulty] || 520)) continue;
 
     const dx = ball.x - button.x;
     const dy = ball.y - button.y;
     const dist = Math.hypot(dx, dy);
     if (dist > touchRange) continue;
-    if (Math.hypot(ball.vx, ball.vy) > 520) continue;
+    if (Math.hypot(ball.vx, ball.vy) > (difficulty === 'hard' ? 430 : difficulty === 'medium' ? 360 : 300)) continue;
 
     const teammates = getButtonsForPlayer(button.playerId).filter((b) => b.id !== button.id);
     const goalX = button.playerId === 0 ? FIELD.width : 0;
     const goalY = FIELD.height / 2;
     const toGoalDist = Math.hypot(goalX - button.x, goalY - button.y);
 
+    const attackDir = button.playerId === 0 ? 1 : -1;
+    const carryX = clamp(ball.x + attackDir * 110, 80, FIELD.width - 80);
+    const carryY = clamp(ball.y + (button.y - FIELD.height / 2) * 0.18, 70, FIELD.height - 70);
+    const carryDx = carryX - button.x;
+    const carryDy = carryY - button.y;
+    const carryMag = Math.hypot(carryDx, carryDy) || 1;
+    const carryAim = { x: carryDx / carryMag, y: carryDy / carryMag };
+
+    const targetAhead = teammates.find((candidate) => (attackDir === 1 ? candidate.x > button.x : candidate.x < button.x));
+
     // EASY: mini-condução — leva a bola suavemente em direção ao gol adversario, bot persegue
     if (difficulty === 'easy') {
-      const dirx = (goalX - button.x) / Math.max(1, Math.hypot(goalX - button.x, goalY - button.y));
-      const diry = (goalY - button.y) / Math.max(1, Math.hypot(goalX - button.x, goalY - button.y));
-      const nudge = 200 + Math.random() * 100;
-      ball.vx += dirx * nudge * 0.65;
-      ball.vy += diry * nudge * 0.65;
-      // botão segue a bola
-      button.vx += dirx * 120 * dt;
-      button.vy += diry * 120 * dt;
+      const shouldShoot = toGoalDist < 180;
+      if (shouldShoot) {
+        const dirx = (goalX - button.x) / Math.max(1, Math.hypot(goalX - button.x, goalY - button.y));
+        const diry = (goalY - button.y) / Math.max(1, Math.hypot(goalX - button.x, goalY - button.y));
+        const nudge = 180 + Math.random() * 80;
+        ball.vx += dirx * nudge * 0.72;
+        ball.vy += diry * nudge * 0.72;
+        button.vx += dirx * 110 * dt;
+        button.vy += diry * 110 * dt;
+        button.botActionAt = now;
+        button.lastShotAt = now;
+        if (world.effects) {
+          world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.20, radius: 11, life: 0.15, maxLife: 0.15, color: player.colors?.[0] });
+        }
+        audio.kick(0.20, 'touch');
+        continue;
+      }
+
+      ball.vx += carryAim.x * 130;
+      ball.vy += carryAim.y * 130;
+      button.vx += carryAim.x * 85 * dt;
+      button.vy += carryAim.y * 85 * dt;
       button.botActionAt = now;
       button.lastShotAt = now;
       if (world.effects) {
         world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.20, radius: 11, life: 0.15, maxLife: 0.15, color: player.colors?.[0] });
       }
-      audio.kick(0.20);
+      audio.kick(0.16, 'touch');
       continue;
     }
 
     // MEDIUM: toca a bola — prefere passes curtos para companheiros ou empurra gentilmente ao gol
     if (difficulty === 'medium') {
+      const passChance = targetAhead ? 0.68 : 0.42;
+      const shouldShoot = toGoalDist < 220 && Math.random() < 0.45;
+
+      if (shouldShoot) {
+        const gdx = goalX - button.x;
+        const gdy = goalY - button.y;
+        const gmag = Math.hypot(gdx, gdy) || 1;
+        const aimG = button.applyAimAssist({ x: gdx / gmag, y: gdy / gmag }, player.activePower, toGoalDist, 0.54);
+        const gPower = button.computeShotPower(520 + Math.random() * 160, player.activePower) * 0.60;
+        ball.vx += aimG.x * gPower;
+        ball.vy += aimG.y * gPower;
+        button.vx += aimG.x * gPower * 0.09;
+        button.vy += aimG.y * gPower * 0.09;
+        button.botActionAt = now;
+        button.lastShotAt = now;
+        if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.26, radius: 13, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
+        audio.kick(gPower / 1300, 'shoot');
+        continue;
+      }
+
       let target = null;
       if (teammates.length > 0) {
-        // escolhe companheiro mais próximo da bola
-        target = teammates.reduce((best, c) => {
-          if (!best) return c;
-          return Math.hypot(c.x - ball.x, c.y - ball.y) < Math.hypot(best.x - ball.x, best.y - ball.y) ? c : best;
+        // escolhe companheiro mais adiantado ou mais próximo da bola
+        target = teammates.reduce((best, candidate) => {
+          if (!best) return candidate;
+          const candidateScore = Math.hypot(candidate.x - ball.x, candidate.y - ball.y) - (attackDir === 1 ? candidate.x : FIELD.width - candidate.x) * 0.12;
+          const bestScore = Math.hypot(best.x - ball.x, best.y - ball.y) - (attackDir === 1 ? best.x : FIELD.width - best.x) * 0.12;
+          return candidateScore < bestScore ? candidate : best;
         }, null);
       }
 
-      if (target && Math.random() < 0.55) {
+      if (target && Math.random() < passChance) {
         // passe curto com melhor condução
         const pdx = target.x - button.x;
         const pdy = target.y - button.y;
@@ -2110,16 +2167,16 @@ function updateCautiousBotTouches(dt) {
         continue;
       }
 
-      // empurra para o gol com bom controle
-      const gdx = goalX - button.x;
-      const gdy = goalY - button.y;
+      // conduz a bola para ganhar posição antes do passe final ou chute
+      const gdx = goalX - ball.x;
+      const gdy = goalY - ball.y;
       const gmag = Math.hypot(gdx, gdy) || 1;
-      const aimG = button.applyAimAssist({ x: gdx / gmag, y: gdy / gmag }, player.activePower, toGoalDist, 0.54);
-      const gPower = button.computeShotPower(440 + Math.random() * 200, player.activePower) * 0.54;
+      const aimG = button.applyAimAssist({ x: gdx / gmag, y: gdy / gmag }, player.activePower, toGoalDist, 0.34);
+      const gPower = button.computeShotPower(240 + Math.random() * 90, player.activePower) * 0.30;
       ball.vx += aimG.x * gPower;
       ball.vy += aimG.y * gPower;
-      button.vx += aimG.x * gPower * 0.08;
-      button.vy += aimG.y * gPower * 0.08;
+      button.vx += aimG.x * gPower * 0.05;
+      button.vy += aimG.y * gPower * 0.05;
       button.botActionAt = now;
       button.lastShotAt = now;
       if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.26, radius: 13, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
@@ -2161,7 +2218,7 @@ function updateCautiousBotTouches(dt) {
       }
 
       // caso contrário, tenta acionar o striker se existir (melhor condução)
-      if (striker && striker.id !== button.id) {
+      if (striker && striker.id !== button.id && Math.random() < 0.8) {
         const pdx = striker.x - button.x;
         const pdy = striker.y - button.y;
         const pmag = Math.hypot(pdx, pdy) || 1;
@@ -2178,16 +2235,16 @@ function updateCautiousBotTouches(dt) {
         continue;
       }
 
-      // fallback: empurra para o gol com mais força
-      const gdx = goalX - button.x;
-      const gdy = goalY - button.y;
+      // fallback: conduz com segurança até abrir linha de passe ou chute
+      const gdx = goalX - ball.x;
+      const gdy = goalY - ball.y;
       const gmag = Math.hypot(gdx, gdy) || 1;
-      const aim = button.applyAimAssist({ x: gdx / gmag, y: gdy / gmag }, player.activePower, toGoalDist, 0.70);
-      const power = button.computeShotPower(500 + Math.random() * 280, player.activePower) * 0.70;
+      const aim = button.applyAimAssist({ x: gdx / gmag, y: gdy / gmag }, player.activePower, toGoalDist, 0.48);
+      const power = button.computeShotPower(300 + Math.random() * 140, player.activePower) * 0.42;
       ball.vx += aim.x * power;
       ball.vy += aim.y * power;
-      button.vx += aim.x * power * 0.10;
-      button.vy += aim.y * power * 0.10;
+      button.vx += aim.x * power * 0.07;
+      button.vy += aim.y * power * 0.07;
       button.botActionAt = now;
       button.lastShotAt = now;
       if (world.effects) world.effects.impacts.push({ x: (button.x + ball.x) / 2, y: (button.y + ball.y) / 2, strength: 0.30, radius: 14, life: 0.17, maxLife: 0.17, color: player.colors?.[0] });
@@ -2265,16 +2322,23 @@ function updateBotMovement(dt, botDifficulty) {
           b.vy *= 0.85;
         }
       } else {
-        // Se não for o chaser ou estiver longe, tenta voltar para a posição "home" ou fica vadiando
-        const homeDx = b._home.x - b.x;
-        const homeDy = b._home.y - b.y;
-        const homeDist = Math.hypot(homeDx, homeDy);
+        // Em vez de voltar sempre para o ponto inicial, ocupa uma posição de apoio
+        // que acompanha a jogada e preserva a formação.
+        const attackDir = player.id === 0 ? 1 : -1;
+        const laneOffset = (b._home.y - FIELD.height / 2) * 0.35;
+        const supportX = clamp(ball.x + attackDir * 120, 80, FIELD.width - 80);
+        const supportY = clamp(ball.y + laneOffset, 70, FIELD.height - 70);
+        const tacticalBlend = clamp((distToBall - 120) / 420, 0.18, 0.82);
+        const targetX = b._home.x * tacticalBlend + supportX * (1 - tacticalBlend);
+        const targetY = b._home.y * tacticalBlend + supportY * (1 - tacticalBlend);
+        const targetDx = targetX - b.x;
+        const targetDy = targetY - b.y;
+        const targetDist = Math.hypot(targetDx, targetDy);
 
-        if (homeDist > 40) {
-          // Volta devagar para o lugar
-          const pull = Math.min(accel * 0.4, homeDist * 2);
-          b.vx += (homeDx / homeDist) * pull * dt;
-          b.vy += (homeDy / homeDist) * pull * dt;
+        if (targetDist > 16) {
+          const pull = Math.min(accel * 0.38, targetDist * 1.8);
+          b.vx += (targetDx / targetDist) * pull * dt;
+          b.vy += (targetDy / targetDist) * pull * dt;
         } else {
           // Movimento de vadiagem (idle wander) para dar vida
           b.applyIdleWander(dt);
