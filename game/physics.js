@@ -103,6 +103,10 @@ export class WorldPhysics {
     if (body.x - body.radius < wall) {
       const inGoalOpening = isBall && body.y > gy0 && body.y < gy1;
       if (!inGoalOpening) {
+    }
+    if (b?.type === 'ball' && b.isPowerShot && a?.type === 'button') {
+      const shooterPlayerId = b.lastShooterPlayerId;
+      if (a.playerId !== shooterPlayerId) return; // Ignora se for inimigo
         body.x = wall + body.radius;
         body.vx = Math.abs(body.vx) * this.restitution;
         // perde um pouco de velocidade vertical no impacto com a parede
@@ -150,25 +154,26 @@ export class WorldPhysics {
     const dy = a.y - b.y;
     const dist = Math.hypot(dx, dy);
     const minDist = a.radius + b.radius;
-    if (dist <= 0 || dist >= minDist) return;
-
     // Trigger goalie save animation on ball collision
     if (a?.type === 'ball' && b?.type === 'goalie' && b.saveAnimationTimer <= 0) {
+    const dribbleModeRaw = config?.dribbleMode || 'pesada';
+    const dribbleMode = ({ heavy: 'pesada', balanced: 'equilibrada', loose: 'solta' }[dribbleModeRaw] || dribbleModeRaw);
+    const dribbleProfiles = {
+      solta: { maxContactSpeed: 115, gripBoost: 0.7, blend: 0.03, breakup: 0.34 },
+      equilibrada: { maxContactSpeed: 150, gripBoost: 1.3, blend: 0.09, breakup: 0.24 },
+      pesada: { maxContactSpeed: 235, gripBoost: 4.0, blend: 0.42, breakup: 0.04 },
+    };
+    const dribble = dribbleProfiles[dribbleMode] || dribbleProfiles.pesada;
+    const dribbleContact = isBallButton && normalSpeed < dribble.maxContactSpeed;
+
+    if (velAlongNormal > 0 && !dribbleContact) return;
       b.saveAnimationTimer = 0.2;
       b.lastSaveAngle = Math.atan2(dy, dx);
     }
 
     const nx = dx / dist;
-    const ny = dy / dist;
-
-    const overlap = minDist - dist;
-    const totalInvMass = a.invMass + b.invMass;
-    if (totalInvMass <= 0) return;
-
-    // Separação proporcional à massa
-    const sepA = overlap * (a.invMass / totalInvMass);
-    const sepB = overlap * (b.invMass / totalInvMass);
-    a.x += nx * sepA;
+    // Mini condução (grip leve): em toques suaves bola↔botão, reduz quique e aumenta atrito
+    if (dribbleContact) {
     a.y += ny * sepA;
     b.x -= nx * sepB;
     b.y -= ny * sepB;
@@ -229,14 +234,16 @@ export class WorldPhysics {
     b.vy -= tiy * b.invMass;
 
     // Leve "follow" da bola no botão em contato suave (sensação de condução)
-    if (isBallButton && normalSpeed < dribble.maxContactSpeed) {
-      const grip = clamp((220 - normalSpeed) / 220, 0, 1);
-      const blend = dribble.blend * grip;
+    if (dribbleContact) {
+      const grip = clamp((dribble.maxContactSpeed - normalSpeed) / dribble.maxContactSpeed, 0, 1);
+      const blend = dribble.blend * (0.6 + grip);
       a.vx += (b.vx - a.vx) * blend;
       a.vy += (b.vy - a.vy) * blend;
-      const carry = clamp(Math.hypot(b.vx, b.vy) / 220, 0, 1);
-      a.vx += b.vx * 0.08 * carry;
-      a.vy += b.vy * 0.08 * carry;
+      const carry = clamp((Math.hypot(b.vx, b.vy) + Math.hypot(a.vx, a.vy)) / 420, 0, 1);
+      a.vx += b.vx * (0.12 + grip * 0.08) * carry;
+      a.vy += b.vy * (0.12 + grip * 0.08) * carry;
+      b.vx += a.vx * 0.03 * grip;
+      b.vy += a.vy * 0.03 * grip;
     }
 
     // Em combate forte, a bola deve escapar do botão em vez de colar.
