@@ -2,6 +2,60 @@ import { clamp, rand } from '../utils.js';
 
 let nextId = 1;
 
+function createPlayerSprite(colors, playerId) {
+  const frames = 3;
+  const fw = 64;
+  const fh = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = fw * frames;
+  canvas.height = fh;
+  const ctx = canvas.getContext('2d');
+
+  const shirt = colors?.[0] || '#999999';
+  const trim = colors?.[1] || '#555555';
+
+  for (let f = 0; f < frames; f++) {
+    const ox = f * fw;
+
+    // background (transparent)
+    // head
+    ctx.fillStyle = '#f2c9a3';
+    ctx.beginPath();
+    ctx.ellipse(ox + fw/2, 14, 12, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // hair (simple)
+    ctx.fillStyle = '#2b2b2b';
+    ctx.fillRect(ox + fw/2 - 12, 6, 24, 8);
+
+    // body (shirt)
+    ctx.fillStyle = shirt;
+    ctx.fillRect(ox + fw/2 - 16, 26, 32, 20);
+    // trim
+    ctx.fillStyle = trim;
+    ctx.fillRect(ox + fw/2 - 16, 26, 32, 4);
+
+    // legs (animated slight offset)
+    const step = (f === 0 ? -4 : f === 1 ? 0 : 4);
+    ctx.fillStyle = '#2a3c9f';
+    ctx.fillRect(ox + fw/2 - 10 + step, 46, 8, 14);
+    ctx.fillRect(ox + fw/2 + 2 - step, 46, 8, 14);
+
+    // socks
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(ox + fw/2 - 10 + step, 58, 8, 4);
+    ctx.fillRect(ox + fw/2 + 2 - step, 58, 8, 4);
+
+    // number on shirt
+    ctx.fillStyle = '#000000';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(String(playerId % 99), ox + fw/2, 36);
+  }
+
+  return canvas;
+}
+
 export class Button {
   constructor({ x, y, playerId, colors, team, stats }) {
     this.type = 'button';
@@ -40,6 +94,14 @@ export class Button {
     this.dashTimer = 0;
 
     this._home = { x, y };
+    // Sprite procedural do jogador (fallback sem precisar de imagens externas)
+    try {
+      this.playerSprite = createPlayerSprite(this.colors, this.id);
+      this.spriteFrameW = this.playerSprite.width / 3;
+      this.spriteFrameH = this.playerSprite.height;
+    } catch (e) {
+      this.playerSprite = null;
+    }
   }
 
   applyIdleWander(dt) {
@@ -311,69 +373,75 @@ export class Button {
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    // 2. CORPO PRINCIPAL (Gradiente Radial para profundidade)
-    const [c1, c2] = this.colors;
-    
-    // 1. SOMBRA DINÂMICA (Move conforme a posição)
-    ctx.save();
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.shadowOffsetX = this.vx * 0.01;
-    ctx.shadowOffsetY = this.vy * 0.01 + 6;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    
-    // Lateral do botão (Bevel/Chanfrado)
-    ctx.beginPath();
-    ctx.arc(this.x, this.y + 2, this.radius, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fill();
-
-    // Superfície    // Button body
-    const isPowerShot = activePower?.type === 'powershot';
-    const grad = ctx.createRadialGradient(
-      this.x - this.radius * 0.4, this.y - this.radius * 0.4, 2,
-      this.x, this.y, this.radius
-    );
-    
-    if (isPowerShot) {
-      grad.addColorStop(0, '#efc9ff');
-      grad.addColorStop(0.5, '#bf00ff');
-      grad.addColorStop(1, '#660088');
+    // 2. Desenha sprite do jogador (se disponível) ao invés do corpo circular
+    if (this.playerSprite) {
+      const speed = Math.hypot(this.vx, this.vy);
+      const t = performance.now();
+      const frames = 3;
+      const base = (t / 180) + (speed / 120);
+      const fi = Math.floor(base) % frames;
+      const sx = fi * this.spriteFrameW;
+      const sy = 0;
+      const dw = this.spriteFrameW * 0.78;
+      const dh = this.spriteFrameH * 0.78;
+      ctx.drawImage(this.playerSprite, sx, sy, this.spriteFrameW, this.spriteFrameH, this.x - dw / 2, this.y - dh / 2 - 6, dw, dh);
     } else {
-      grad.addColorStop(0, this.colors[0]);
-      grad.addColorStop(1, this.colors[1]);
+      // Fallback para desenho circular existente
+      const [c1, c2] = this.colors;
+      ctx.save();
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.shadowOffsetX = this.vx * 0.01;
+      ctx.shadowOffsetY = this.vy * 0.01 + 6;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.beginPath();
+      ctx.arc(this.x, this.y + 2, this.radius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fill();
+
+      const isPowerShot = activePower?.type === 'powershot';
+      const grad = ctx.createRadialGradient(
+        this.x - this.radius * 0.4, this.y - this.radius * 0.4, 2,
+        this.x, this.y, this.radius
+      );
+      if (isPowerShot) {
+        grad.addColorStop(0, '#efc9ff');
+        grad.addColorStop(0.5, '#bf00ff');
+        grad.addColorStop(1, '#660088');
+      } else {
+        grad.addColorStop(0, this.colors[0]);
+        grad.addColorStop(1, this.colors[1]);
+      }
+      grad.addColorStop(1, 'rgba(0,0,0,0.2)');
+
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(this.x - this.radius * 0.35, this.y - this.radius * 0.35, this.radius * 0.45, this.radius * 0.25, Math.PI * 0.25, 0, Math.PI * 2);
+      const gloss = ctx.createLinearGradient(this.x - this.radius, this.y - this.radius, this.x, this.y);
+      gloss.addColorStop(0, 'rgba(255,255,255,0.45)');
+      gloss.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = gloss;
+      ctx.fill();
+      ctx.restore();
+
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(10,16,30,0.6)';
+      ctx.fill();
     }
-    grad.addColorStop(1, 'rgba(0,0,0,0.2)');
-
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-    ctx.fillStyle = grad;
-    ctx.fill();
-
-    // 3. BRILHO ESPECULAR (Glossy effect)
-    ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(this.x - this.radius * 0.35, this.y - this.radius * 0.35, this.radius * 0.45, this.radius * 0.25, Math.PI * 0.25, 0, Math.PI * 2);
-    const gloss = ctx.createLinearGradient(this.x - this.radius, this.y - this.radius, this.x, this.y);
-    gloss.addColorStop(0, 'rgba(255,255,255,0.45)');
-    gloss.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = gloss;
-    ctx.fill();
-    ctx.restore();
-
-    // Borda fina de destaque
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.stroke();
-
-    // 4. MARCA CENTRAL (Reflexo interno)
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, 4, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(10,16,30,0.6)';
-    ctx.fill();
 
     // Desenha a bandeira do time no topo do botão
     if (this.team) {
