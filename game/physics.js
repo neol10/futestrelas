@@ -187,13 +187,14 @@ export class WorldPhysics {
     let mu = this.contactFriction;
 
     // Mini condução (grip leve): em toques suaves bola↔botão, reduz quique e aumenta atrito
-    const dribbleMode = config?.dribbleMode || 'heavy';
+    const dribbleModeRaw = config?.dribbleMode || 'pesada';
+    const dribbleMode = ({ heavy: 'pesada', balanced: 'equilibrada', loose: 'solta' }[dribbleModeRaw] || dribbleModeRaw);
     const dribbleProfiles = {
-      loose: { maxContactSpeed: 130, gripBoost: 0.8, blend: 0.05, breakup: 0.26 },
-      balanced: { maxContactSpeed: 160, gripBoost: 1.4, blend: 0.11, breakup: 0.20 },
-      heavy: { maxContactSpeed: 190, gripBoost: 2.2, blend: 0.22, breakup: 0.12 },
+      solta: { maxContactSpeed: 130, gripBoost: 0.8, blend: 0.05, breakup: 0.26 },
+      equilibrada: { maxContactSpeed: 160, gripBoost: 1.4, blend: 0.11, breakup: 0.20 },
+      pesada: { maxContactSpeed: 190, gripBoost: 2.2, blend: 0.22, breakup: 0.12 },
     };
-    const dribble = dribbleProfiles[dribbleMode] || dribbleProfiles.heavy;
+    const dribble = dribbleProfiles[dribbleMode] || dribbleProfiles.pesada;
     if (isBallButton && normalSpeed < dribble.maxContactSpeed) {
       e = Math.min(e, 0.22 + normalSpeed / 1100);
       mu *= 2.2 * dribble.gripBoost;

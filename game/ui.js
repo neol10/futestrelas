@@ -148,7 +148,7 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
   function getConfigFromForm() {
     return {
       controlMode: els.controlMode.value,
-      dribbleMode: els.dribbleMode?.value ?? 'heavy',
+      dribbleMode: els.dribbleMode?.value ?? 'pesada',
       matchTime: els.matchTime.value,
       maxGoals: els.maxGoals.value,
       botsPerTeam: els.botsPerTeam?.value ?? '3',
@@ -174,7 +174,10 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
   function setConfig(cfg) {
     const config = cfg ?? createInitialConfig();
     els.controlMode.value = String(config.controlMode);
-    if (els.dribbleMode) els.dribbleMode.value = String(config.dribbleMode ?? 'heavy');
+    if (els.dribbleMode) {
+      const dribbleMode = String(config.dribbleMode ?? 'pesada');
+      els.dribbleMode.value = dribbleMode === 'heavy' ? 'pesada' : dribbleMode === 'balanced' ? 'equilibrada' : dribbleMode === 'loose' ? 'solta' : dribbleMode;
+    }
     els.matchTime.value = String(config.matchTime);
     els.maxGoals.value = String(config.maxGoals);
     if (els.botsPerTeam) els.botsPerTeam.value = String(config.botsPerTeam ?? '3');
