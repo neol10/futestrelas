@@ -21,8 +21,8 @@ import * as online from './online.js';
 })();
 
 const FIELD = {
-  width: 1400,
-  height: 800,
+  width: 1280,
+  height: 720,
   wall: 18,
   goalWidth: 170,
   goalDepth: 26,

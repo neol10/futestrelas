@@ -22,7 +22,7 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
     remotePeerId: document.getElementById('remotePeerId'),
 
     controlMode: document.getElementById('controlMode'),
-    dribbleAssist: document.getElementById('dribbleAssist'),
+    dribbleMode: document.getElementById('dribbleMode'),
     matchTime: document.getElementById('matchTime'),
     maxGoals: document.getElementById('maxGoals'),
     botsPerTeam: document.getElementById('botsPerTeam'),
@@ -148,7 +148,7 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
   function getConfigFromForm() {
     return {
       controlMode: els.controlMode.value,
-      dribbleAssist: !!els.dribbleAssist?.checked,
+      dribbleMode: els.dribbleMode?.value ?? 'heavy',
       matchTime: els.matchTime.value,
       maxGoals: els.maxGoals.value,
       botsPerTeam: els.botsPerTeam?.value ?? '3',
@@ -174,7 +174,7 @@ export function createUI({ teams, flags, onGoConfig, onBackToMenu, onRestart, on
   function setConfig(cfg) {
     const config = cfg ?? createInitialConfig();
     els.controlMode.value = String(config.controlMode);
-    if (els.dribbleAssist) els.dribbleAssist.checked = !!config.dribbleAssist;
+    if (els.dribbleMode) els.dribbleMode.value = String(config.dribbleMode ?? 'heavy');
     els.matchTime.value = String(config.matchTime);
     els.maxGoals.value = String(config.maxGoals);
     if (els.botsPerTeam) els.botsPerTeam.value = String(config.botsPerTeam ?? '3');

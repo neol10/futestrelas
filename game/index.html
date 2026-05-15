@@ -89,11 +89,13 @@
             </div>
 
             <div class="field">
-              <label class="inline">
-                <input id="dribbleAssist" type="checkbox" />
-                Condução suave da bola
-              </label>
-              <div class="hint">A bola “gruda” um pouco no botão durante toques leves.</div>
+              <label for="dribbleMode">Condução da bola</label>
+              <select id="dribbleMode">
+                <option value="loose">Solta</option>
+                <option value="balanced">Equilibrada</option>
+                <option value="heavy" selected>Pesada</option>
+              </select>
+              <div class="hint">Pesada faz a bola acompanhar mais o botão; solta deixa a bola escapar mais fácil.</div>
             </div>
 
             <div class="field">

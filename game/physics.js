@@ -187,11 +187,16 @@ export class WorldPhysics {
     let mu = this.contactFriction;
 
     // Mini condução (grip leve): em toques suaves bola↔botão, reduz quique e aumenta atrito
-    const dribbleAssist = !!config?.dribbleAssist;
-    if (isBallButton && normalSpeed < 180) {
-      const gripBoost = dribbleAssist ? 2.5 : 1;
+    const dribbleMode = config?.dribbleMode || 'heavy';
+    const dribbleProfiles = {
+      loose: { maxContactSpeed: 130, gripBoost: 0.8, blend: 0.05, breakup: 0.26 },
+      balanced: { maxContactSpeed: 160, gripBoost: 1.4, blend: 0.11, breakup: 0.20 },
+      heavy: { maxContactSpeed: 190, gripBoost: 2.2, blend: 0.22, breakup: 0.12 },
+    };
+    const dribble = dribbleProfiles[dribbleMode] || dribbleProfiles.heavy;
+    if (isBallButton && normalSpeed < dribble.maxContactSpeed) {
       e = Math.min(e, 0.22 + normalSpeed / 1100);
-      mu *= 2.2 * gripBoost;
+      mu *= 2.2 * dribble.gripBoost;
     }
     const j = (-(1 + e) * velAlongNormal) / totalInvMass;
     const ix = j * nx;
@@ -223,9 +228,9 @@ export class WorldPhysics {
     b.vy -= tiy * b.invMass;
 
     // Leve "follow" da bola no botão em contato suave (sensação de condução)
-    if (isBallButton && normalSpeed < 180) {
+    if (isBallButton && normalSpeed < dribble.maxContactSpeed) {
       const grip = clamp((220 - normalSpeed) / 220, 0, 1);
-      const blend = (dribbleAssist ? 0.24 : 0.08) * grip;
+      const blend = dribble.blend * grip;
       a.vx += (b.vx - a.vx) * blend;
       a.vy += (b.vy - a.vy) * blend;
     }
@@ -233,10 +238,11 @@ export class WorldPhysics {
     // Em combate forte, a bola deve escapar do botão em vez de colar.
     if (isBallButton && normalSpeed > 260) {
       const breakup = clamp((normalSpeed - 260) / 320, 0, 1);
-      a.vx += nx * j * 0.16 * breakup;
-      a.vy += ny * j * 0.16 * breakup;
-      b.vx -= nx * j * 0.08 * breakup;
-      b.vy -= ny * j * 0.08 * breakup;
+      const breakupScale = dribble.breakup * breakup;
+      a.vx += nx * j * breakupScale;
+      a.vy += ny * j * breakupScale;
+      b.vx -= nx * j * 0.08 * breakupScale;
+      b.vy -= ny * j * 0.08 * breakupScale;
     }
 
     if (onImpact) onImpact(this.impactAt((a.x + b.x) / 2, (a.y + b.y) / 2, Math.abs(j)));
