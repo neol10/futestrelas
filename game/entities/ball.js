@@ -26,6 +26,9 @@ export class Ball {
 
     this.isPowerShot = false;
     this.lastShooterPlayerId = null;
+    this.carriedByButtonId = null;
+    this.carryOffsetX = 0;
+    this.carryOffsetY = 0;
 
     this._home = { x, y };
   }
@@ -106,6 +109,9 @@ export class Ball {
     this.trail = [];
     this.isPowerShot = false;
     this.lastShooterPlayerId = null;
+    this.carriedByButtonId = null;
+    this.carryOffsetX = 0;
+    this.carryOffsetY = 0;
   }
 
   render(ctx) {
