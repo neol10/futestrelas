@@ -103,7 +103,8 @@ export class Button {
       try {
         const slug = String(this.teamName).toLowerCase().replace(/[^a-z0-9]+/g, '_');
         const img = new Image();
-        img.src = `game/assets/players/${slug}.png`;
+        // Prioridade para a pasta de fotos do usuário
+        img.src = `game/fotos/${slug}.png`;
         img.crossOrigin = 'anonymous';
         img.onload = () => {
           // assume sprite-sheet horizontal with `spriteFrames` frames
@@ -112,14 +113,25 @@ export class Button {
           this.spriteFrameH = img.naturalHeight;
         };
         img.onerror = () => {
-          // fallback procedural
-          try {
-            this.playerSprite = createPlayerSprite(this.colors, this.id);
-            this.spriteFrameW = this.playerSprite.width / 3;
-            this.spriteFrameH = this.playerSprite.height;
-          } catch (e) {
-            this.playerSprite = null;
-          }
+          // Segundo fallback: pasta antiga /assets/players
+          const legacy = new Image();
+          legacy.src = `game/assets/players/${slug}.png`;
+          legacy.crossOrigin = 'anonymous';
+          legacy.onload = () => {
+            this.playerSprite = legacy;
+            this.spriteFrameW = Math.floor(legacy.naturalWidth / this.spriteFrames);
+            this.spriteFrameH = legacy.naturalHeight;
+          };
+          legacy.onerror = () => {
+            // fallback procedural
+            try {
+              this.playerSprite = createPlayerSprite(this.colors, this.id);
+              this.spriteFrameW = this.playerSprite.width / 3;
+              this.spriteFrameH = this.playerSprite.height;
+            } catch (e) {
+              this.playerSprite = null;
+            }
+          };
         };
       } catch (e) {
         try {
